@@ -15,6 +15,8 @@
 #include <algorithm>
 #include "Camera.h"
 #include "imgui.h"
+#include "SkyboxMesh.h"
+#include "SkyboxPipeline.h"
 
 // Forward declarations
 class SwapChainManager;
@@ -69,7 +71,7 @@ private:
     void printMatrix(const glm::mat4& mat, const std::string& name);
     void loadModel();
     void createTextureSampler();
-    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
+    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels, bool isCubemap);
 
 
     GLFWwindow* window;
@@ -155,6 +157,7 @@ private:
     VkDeviceMemory textureImageMemory;
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
     void createTextureImageView();
+    VkImageView createCubemapImageView(VkImage image, VkFormat format);
     void loadTexture(const std::string& filePath, VkImage& textureImage, VkDeviceMemory& textureImageMemory);
     VkImageView textureImageView;
     VkSampler textureSampler;
@@ -255,5 +258,30 @@ private:
     bool captureScreenshot = false;    
     std::string lastScreenshotFilename = "";
     ImTextureID screenshotTextureID = nullptr;
+
+
+    // ---- SKYBOX RESOURCES ----
+
+// SKYBOX
+    std::unique_ptr<SkyboxMesh> skyboxMesh;
+    std::unique_ptr<SkyboxPipeline> skyboxPipeline;
+
+    VkDescriptorPool skyboxDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSetLayout skyboxDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet skyboxDescriptorSet = VK_NULL_HANDLE;
+
+    VkImage skyboxImage = VK_NULL_HANDLE;
+    VkDeviceMemory skyboxImageMemory = VK_NULL_HANDLE;
+    VkImageView skyboxImageView = VK_NULL_HANDLE;
+    VkSampler skyboxSampler = VK_NULL_HANDLE;
+
+    // ---- SKYBOX DESCRIPTORS ----
+    void createSkyboxDescriptorSetLayout();
+    void createSkyboxDescriptorSet();
+
+
+    void createSkyboxDescriptorPool();
+
+    bool useSolidBackground = false; // default ON
 
 };

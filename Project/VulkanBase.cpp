@@ -118,6 +118,87 @@ void VulkanBase::initVulkan() {
 
     createTextureSampler();
 
+
+    // ---- SKYBOX INIT (replace previous block) ----
+    int w = 0, h = 0, ch = 0;
+    if (stbi_info("textures/skybox.jpg", &w, &h, &ch)) {
+        std::cout << "initVulkan: skybox.jpg exists, size = " << w << " x " << h << " (channels = " << ch << ")\n";
+    }
+    else {
+        std::cout << "initVulkan: WARNING - skybox.jpg not found or cannot read image info\n";
+    }
+
+    // 1) Load cubemap (returns struct with image/view/sampler)
+    CubemapTexture cb;
+    try {
+        cb = ModelLoader::CreateCubemapFromHorizontalCross(
+            device,
+            physicalDevice,
+            commandPool.getVkCommandPool(),
+            graphicsQueue,
+            "textures/skybox.jpg"
+        );
+    }
+    catch (const std::exception& e) {
+        throw std::runtime_error(std::string("Failed to create cubemap: ") + e.what());//CRASHED HERE 
+    }
+
+
+
+
+    // 2) Assign to VulkanBase members
+    skyboxImage = cb.image;
+    skyboxImageMemory = cb.memory;
+    skyboxImageView = cb.view;
+    skyboxSampler = cb.sampler;
+
+
+    // ---- DEBUG CUBEMAP LOADING -------------------------------------------------
+    std::cout << "\n=== DEBUG: Cubemap Loaded ===\n";
+    std::cout << "Image:   " << cb.image << "\n";
+    std::cout << "Memory:  " << cb.memory << "\n";
+    std::cout << "View:    " << cb.view << "\n";
+    std::cout << "Sampler: " << cb.sampler << "\n";
+
+    // We can also check if each face was written correctly (ModelLoader printed them)
+    std::cout << "Check ModelLoader output above for 'face[0..5] first pixel RGBA'.\n";
+
+    std::cout << "\n=== DEBUG: Assigned Cubemap To VulkanBase ===\n";
+    std::cout << "skyboxImage       = " << skyboxImage << "\n";
+    std::cout << "skyboxImageMemory = " << skyboxImageMemory << "\n";
+    std::cout << "skyboxImageView   = " << skyboxImageView << "\n";
+    std::cout << "skyboxSampler     = " << skyboxSampler << "\n";
+
+
+    // Quick sanity: ensure loader returned valid handles
+    if (skyboxImage == VK_NULL_HANDLE || skyboxImageView == VK_NULL_HANDLE || skyboxSampler == VK_NULL_HANDLE) {
+        throw std::runtime_error("initVulkan: Cubemap loader returned null handle(s). Check image layout and loader implementation.");
+    }
+
+    // 3) Create skybox mesh
+    skyboxMesh = std::make_unique<SkyboxMesh>();
+    skyboxMesh->create(device, physicalDevice, commandPool.getVkCommandPool(), graphicsQueue);
+
+    // 4) Create descriptor pool/layout and allocate descriptor set
+    createSkyboxDescriptorPool();       // must create skyboxDescriptorPool (one combined sampler entry)
+    createSkyboxDescriptorSetLayout();  // descriptor set layout for cubemap sampler
+    createSkyboxDescriptorSet();        // will now succeed because imageView & sampler are valid
+
+    // 5) Create skybox pipeline (needs descriptor set layout and renderPass)
+    skyboxPipeline = std::make_unique<SkyboxPipeline>();
+    skyboxPipeline->create(
+        device,
+        swapChainManager->getSwapChainExtent(),
+        renderPass,
+        descriptorSetLayout,         
+        skyboxDescriptorSetLayout,
+        msaaSamples
+    );
+
+    // ---- SKYBOX END ----
+
+
+
     sceneObjects = ModelLoader::loadSceneFromJson("res/scene.json");
 
      // Aggregate the vertex and index data from all SceneObjects
@@ -134,7 +215,7 @@ void VulkanBase::initVulkan() {
 
      loadModel();
 
-   
+
    
     createUniformBuffers();
     createLightInfoBuffers();  
@@ -735,11 +816,22 @@ void VulkanBase::recordCommandBuffer(CommandBuffer& commandBuffer, uint32_t imag
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     commandBuffer.begin(&beginInfo);
 
-    // Update Vulkan clear color from ImGui color picker
-    clearColor.color.float32[0] = backgroundColor.x;
-    clearColor.color.float32[1] = backgroundColor.y;
-    clearColor.color.float32[2] = backgroundColor.z;
-    clearColor.color.float32[3] = backgroundColor.w;
+
+    // Update Vulkan clear color from ImGui color picker (respect toggle)
+    if (useSolidBackground) {
+        clearColor.color.float32[0] = backgroundColor.x;
+        clearColor.color.float32[1] = backgroundColor.y;
+        clearColor.color.float32[2] = backgroundColor.z;
+        clearColor.color.float32[3] = backgroundColor.w;
+    }
+    else {
+        // "Disable" solid background: clear to transparent black so we can see skybox better.
+        // (This doesn't change the renderpass loadOp; it just paints a neutral clear color.)
+        clearColor.color.float32[0] = 0.0f;
+        clearColor.color.float32[1] = 0.0f;
+        clearColor.color.float32[2] = 0.0f;
+        clearColor.color.float32[3] = 0.0f;
+    }
 
 
     VkRenderPassBeginInfo renderPassInfo{};
@@ -758,6 +850,46 @@ void VulkanBase::recordCommandBuffer(CommandBuffer& commandBuffer, uint32_t imag
     renderPassInfo.pClearValues = clearValues.data();
 
     commandBuffer.beginRenderPass(renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    // std::cout << "\n=== DEBUG SKYBOX DRAW ===\n";
+    // std::cout << "Pipeline:      " << skyboxPipeline->pipeline << "\n";
+    // std::cout << "PipelineLayout:" << skyboxPipeline->layout << "\n";
+    // std::cout << "Set0 (UBO):    " << descriptorSets[imageIndex] << "\n";
+    // std::cout << "Set1 (Skybox): " << skyboxDescriptorSet << "\n";
+    // std::cout << "ImageView:     " << skyboxImageView << "\n";
+    // std::cout << "Sampler:       " << skyboxSampler << "\n";
+
+
+
+    // ---- DRAW SKYBOX ----
+    skyboxPipeline->bind(commandBuffer.getVkCommandBuffer());
+
+    // BIND SKYBOX DESCRIPTOR (keep this — we still need the cubemap)
+    std::array<VkDescriptorSet, 2> sets = { descriptorSets[imageIndex], skyboxDescriptorSet };
+    vkCmdBindDescriptorSets(
+        commandBuffer.getVkCommandBuffer(),
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        skyboxPipeline->layout,
+        0,
+        static_cast<uint32_t>(sets.size()),
+        sets.data(),
+        0,
+        nullptr
+    );
+
+    float skyboxScale = 500.0f; // try 2.0, increase if still small (500, 1000, etc)
+    vkCmdPushConstants(commandBuffer.getVkCommandBuffer(),
+        skyboxPipeline->layout,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        0,
+        sizeof(float),
+        &skyboxScale);
+
+    // Draw skybox cube (do NOT set viewport/scissor here — pipeline already has them)
+    skyboxMesh->draw(commandBuffer.getVkCommandBuffer());
+
+
+
     vkCmdBindPipeline(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     VkBuffer vertexBuffers[] = { vertexBuffer };
@@ -825,8 +957,15 @@ void VulkanBase::recordCommandBuffer(CommandBuffer& commandBuffer, uint32_t imag
 
             ImGui::TextUnformatted("Background Setting");
             ImGui::Spacing();
- 
-            ImGui::ColorPicker3("color", (float*)&backgroundColor);
+
+            ImGui::Checkbox("Solid Background", &useSolidBackground);
+
+            if (useSolidBackground) {
+                ImGui::ColorPicker3("color", (float*)&backgroundColor);
+            }
+            else {
+                ImGui::TextWrapped("Solid background disabled — clearing to black so skybox will be visible.");
+            }
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -1063,15 +1202,15 @@ bool VulkanBase::checkDeviceExtensionSupport(VkPhysicalDevice device) {
 void VulkanBase::createAdditionalTextures() {
     // Load and create Metalness Texture
     loadTexture("textures/vehicle_metalness.png", metalnessImage, metalnessImageMemory);
-    metalnessImageView = createImageView(metalnessImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+    metalnessImageView = createImageView(metalnessImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels, false);
 
     // Load and create Normal Texture
     loadTexture("textures/vehicle_normal.png", normalImage, normalImageMemory);
-    normalImageView = createImageView(normalImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+    normalImageView = createImageView(normalImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels, false);
 
     // Load and create Specular Texture
     loadTexture("textures/vehicle_specular.png", specularImage, specularImageMemory);
-    specularImageView = createImageView(specularImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+    specularImageView = createImageView(specularImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels, false);
 
     // If using a common sampler for these textures:
     createTextureSampler();
@@ -1239,15 +1378,37 @@ void VulkanBase::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
 
 void VulkanBase::createTextureImageView()
 {
-    textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+    textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels, false);
 }
+
+
+VkImageView VulkanBase::createCubemapImageView(VkImage image, VkFormat format) {
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    viewInfo.format = format;
+
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 6;
+
+    VkImageView imageView;
+    if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create cubemap image view!");
+    }
+    return imageView;
+}
+
 
 void VulkanBase::createDepthResources()
 {
     VkFormat depthFormat = findDepthFormat();
 
     createImage(swapChainManager->getSwapChainExtent().width, swapChainManager->getSwapChainExtent().height,1, msaaSamples, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
-    depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT,1);
+    depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT,1, false);
 
 }
 
@@ -1293,7 +1454,7 @@ void VulkanBase::createColorResources()
     VkFormat colorFormat = swapChainManager->getSwapChainImageFormat();
 
     createImage(swapChainManager->getSwapChainExtent().width, swapChainManager->getSwapChainExtent().height, 1, msaaSamples, colorFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, colorImage, colorImageMemory);
-    colorImageView = createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+    colorImageView = createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1, false);
 
 }
 
@@ -2183,26 +2344,41 @@ void VulkanBase::createDescriptorSets() {
 
 
 
-VkImageView VulkanBase::createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels) {
+VkImageView VulkanBase::createImageView(
+    VkImage image,
+    VkFormat format,
+    VkImageAspectFlags aspectFlags,
+    uint32_t mipLevels,
+    bool isCubemap
+) {
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+
+    if (isCubemap) {
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+        viewInfo.subresourceRange.layerCount = 6;
+    }
+    else {
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.subresourceRange.layerCount = 1;
+    }
+
     viewInfo.format = format;
+
     viewInfo.subresourceRange.aspectMask = aspectFlags;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = mipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
-    viewInfo.subresourceRange.aspectMask = aspectFlags;
 
     VkImageView imageView;
     if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create texture image view!");
+        throw std::runtime_error("failed to create image view!");
     }
 
     return imageView;
 }
+
 
 
 
@@ -2358,6 +2534,86 @@ void VulkanBase::updateUniformBuffer(uint32_t currentImage) {
     vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
 }
 
+
+void VulkanBase::createSkyboxDescriptorSetLayout()
+{
+    VkDescriptorSetLayoutBinding samplerBinding{};
+    samplerBinding.binding = 0;
+    samplerBinding.descriptorCount = 1;
+    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    samplerBinding.pImmutableSamplers = nullptr;
+    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT; // include both if shader samples in vertex
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &samplerBinding;
+
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &skyboxDescriptorSetLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create skybox descriptor set layout!");
+}
+
+void VulkanBase::createSkyboxDescriptorSet()
+{
+    // Sanity checks: must have valid image view and sampler before allocating descriptor
+    if (skyboxImageView == VK_NULL_HANDLE) {
+        throw std::runtime_error("createSkyboxDescriptorSet: skyboxImageView is VK_NULL_HANDLE. Cubemap creation failed or not called yet.");
+    }
+    if (skyboxSampler == VK_NULL_HANDLE) {
+        throw std::runtime_error("createSkyboxDescriptorSet: skyboxSampler is VK_NULL_HANDLE. Cubemap sampler creation failed.");
+    }
+
+    // ---- Allocate descriptor set ----
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = skyboxDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &skyboxDescriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(device, &allocInfo, &skyboxDescriptorSet) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate skybox descriptor set!");
+
+    // ---- Descriptor for cubemap ----
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageView = skyboxImageView;
+    imageInfo.sampler = skyboxSampler;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = skyboxDescriptorSet;
+    write.dstBinding = 0;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.descriptorCount = 1;
+    write.pImageInfo = &imageInfo;
+    std::cout << "createSkyboxDescriptorSet: imageView=" << skyboxImageView << " sampler=" << skyboxSampler << "\n";
+
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    std::cout << "=== DEBUG: Skybox Descriptor Updated ===\n";
+    std::cout << "DescriptorSet = " << skyboxDescriptorSet << "\n";
+    std::cout << "View in descriptor = " << skyboxImageView
+        << ", Sampler = " << skyboxSampler << "\n";
+
+}
+
+
+
+void VulkanBase::createSkyboxDescriptorPool()
+{
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &skyboxDescriptorPool) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create skybox descriptor pool!");
+}
 
 
 void VulkanBase::printMatrix(const glm::mat4& mat, const std::string& name) {

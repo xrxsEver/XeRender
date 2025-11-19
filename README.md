@@ -10,6 +10,8 @@ XeRender is a 3D renderer implementing Physically Based Rendering (PBR) with an 
 * **AmbientColor \& AmbientLight**: Control global illumination settings.
 * **Rim Lighting**: Enhance object edges for better depth perception.
 * **Normal, Metalness, Specular Maps**: Real-time toggling and application.
+* **Skybox Pipeline (New):** Full skybox rendering pipeline added.
+* **Background Skybox Rendering (New):** Engine now renders a skybox as the scene background.
 * **Shader Optimizations**: Improved performance and visual quality.
 
 
