@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
@@ -17,6 +17,8 @@
 #include "imgui.h"
 #include "SkyboxMesh.h"
 #include "SkyboxPipeline.h"
+#include "WaterMesh.h"
+#include "WaterPipeline.h"
 
 // Forward declarations
 class SwapChainManager;
@@ -27,7 +29,8 @@ class xrxsPipeline;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
-class VulkanBase {
+class VulkanBase
+{
 public:
     VulkanBase();
     ~VulkanBase();
@@ -62,19 +65,20 @@ private:
     void processInput(float deltaTime);
 
     void keyEvent(int key, int scancode, int action, int mods);
-    void mouseMove(GLFWwindow* window, double xpos, double ypos);
-    void mouseEvent(GLFWwindow* window, int button, int action, int mods);
-    void beginRenderPass(const CommandBuffer& buffer, VkFramebuffer currentBuffer, VkExtent2D extent);
-    void endRenderPass(const CommandBuffer& buffer);
-    void recordCommandBuffer(CommandBuffer& commandBuffer, uint32_t imageIndex);
+    void mouseMove(GLFWwindow *window, double xpos, double ypos);
+    void mouseEvent(GLFWwindow *window, int button, int action, int mods);
+    void beginRenderPass(const CommandBuffer &buffer, VkFramebuffer currentBuffer, VkExtent2D extent);
+    void endRenderPass(const CommandBuffer &buffer);
+    void recordCommandBuffer(CommandBuffer &commandBuffer, uint32_t imageIndex);
 
-    void printMatrix(const glm::mat4& mat, const std::string& name);
+    void DrawSceneObjects(CommandBuffer &commandBuffer, uint32_t imageIndex);
+
+    void printMatrix(const glm::mat4 &mat, const std::string &name);
     void loadModel();
     void createTextureSampler();
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels, bool isCubemap);
 
-
-    GLFWwindow* window;
+    GLFWwindow *window;
     VkInstance instance;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device;
@@ -112,12 +116,9 @@ private:
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
 
-  
-
-
-    //Mouse var 
+    // Mouse var
     bool lmbPressed = false;
-    void mouseScroll(GLFWwindow* window, double xoffset, double yoffset);
+    void mouseScroll(GLFWwindow *window, double xoffset, double yoffset);
 
     glm::vec2 m_DragStart;
     float m_Radius = 10.0f;
@@ -142,37 +143,36 @@ private:
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels);
 
-    void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);
-    static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
-    std::vector<const char*> getRequiredExtensions();
+    void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT &createInfo);
+    static void framebufferResizeCallback(GLFWwindow *window, int width, int height);
+    std::vector<const char *> getRequiredExtensions();
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
-    static const std::vector<const char*> deviceExtensions;
+    static const std::vector<const char *> deviceExtensions;
 
-    //texture part 
+    // texture part
 
     void createTextureImage();
-    void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+    void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage &image, VkDeviceMemory &imageMemory);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
-    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer &buffer, VkDeviceMemory &bufferMemory);
     void createTextureImageView();
     VkImageView createCubemapImageView(VkImage image, VkFormat format);
-    void loadTexture(const std::string& filePath, VkImage& textureImage, VkDeviceMemory& textureImageMemory);
+    void loadTexture(const std::string &filePath, VkImage &textureImage, VkDeviceMemory &textureImageMemory);
     VkImageView textureImageView;
     VkSampler textureSampler;
     VkSamplerCreateInfo samplerInfo;
 
-    //Depth part
+    // Depth part
 
     VkImage depthImage;
     VkDeviceMemory depthImageMemory;
     VkImageView depthImageView;
     void createDepthResources();
     VkFormat findDepthFormat();
-    VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
+    VkFormat findSupportedFormat(const std::vector<VkFormat> &candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
     bool hasStencilComponent(VkFormat format);
-
 
     VkImage metalnessImage;
     VkDeviceMemory metalnessImageMemory;
@@ -190,7 +190,6 @@ private:
 
     void createAdditionalTextures();
 
-
     uint32_t mipLevels;
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
 
@@ -202,7 +201,7 @@ private:
     VkImageView colorImageView;
     void createColorResources();
 
-    //light 
+    // light
 
     std::vector<VkBuffer> lightInfoBuffers;
     std::vector<VkDeviceMemory> lightInfoBuffersMemory;
@@ -211,22 +210,21 @@ private:
     void updateLightInfoBuffer(uint32_t currentImage);
     bool rotationEnabled = false;
     bool rKeyPressed = false;
-    ImVec4 backgroundColor = ImVec4(0.04f, 0.1f, 0.09f, 0.1f);  // Initial background color for ImGui
-    VkClearValue clearColor;  // Clear value used by Vulkan
+    ImVec4 backgroundColor = ImVec4(0.04f, 0.1f, 0.09f, 0.1f); // Initial background color for ImGui
+    VkClearValue clearColor;                                   // Clear value used by Vulkan
     bool wireframeEnabled = false;
-    bool currentWireframeState = false;  // Store the last known wireframe state
+    bool currentWireframeState = false; // Store the last known wireframe state
     void updatePipelineIfNeeded();
 
-
-    //toggleInfo
+    // toggleInfo
     std::vector<VkBuffer> toggleInfoBuffers;
     std::vector<VkDeviceMemory> toggleInfoBuffersMemory;
     void createToggleInfoBuffers();
-    void updateToggleInfo(uint32_t currentImage, const ToggleInfo& toggleInfo);
+    void updateToggleInfo(uint32_t currentImage, const ToggleInfo &toggleInfo);
 
     ToggleInfo currentToggleInfo;
 
-    //light setup
+    // light setup
 
     glm::vec3 light0Color = glm::vec3(1.0f, 0.6f, 0.2f); // Yellow light default color
     float light0Intensity = 2.5f;
@@ -234,35 +232,32 @@ private:
     glm::vec3 light1Color = glm::vec3(1.0f, 1.0f, 1.0f); // White light default color
     float light1Intensity = 3.0f;
 
-    glm::vec3 light0Position = glm::vec3(0.0f, 0.0f, 30.0f); // Yellow light position
+    glm::vec3 light0Position = glm::vec3(0.0f, 0.0f, 30.0f);  // Yellow light position
     glm::vec3 light1Position = glm::vec3(10.0f, 40.0f, 0.0f); // White light position
 
     glm::vec3 ambientColor = glm::vec3(1.0f, 1.0f, 1.0f); // White light default color
     float ambientIntensity = 3.0f;
 
-
-    void loadSceneFromJson(const std::string& sceneFilePath);
+    void loadSceneFromJson(const std::string &sceneFilePath);
     std::vector<SceneObject> sceneObjects;
-    
-    // screenshot image 
+
+    // screenshot image
     VkImage screenshotImage;
     VkDeviceMemory screenshotImageMemory;
 
-
     void createScreenshotImage(VkExtent2D extent, VkFormat format);
     void blitImage(VkImage srcImage, VkImage dstImage, VkExtent2D extent);
-    void saveScreenshot(VkImage image, VkExtent2D extent, const std::string& filename);
+    void saveScreenshot(VkImage image, VkExtent2D extent, const std::string &filename);
     void takeScreenshot();
 
-    bool screenshotRequested = false;  
-    bool captureScreenshot = false;    
+    bool screenshotRequested = false;
+    bool captureScreenshot = false;
     std::string lastScreenshotFilename = "";
     ImTextureID screenshotTextureID = nullptr;
 
-
     // ---- SKYBOX RESOURCES ----
 
-// SKYBOX
+    // SKYBOX
     std::unique_ptr<SkyboxMesh> skyboxMesh;
     std::unique_ptr<SkyboxPipeline> skyboxPipeline;
 
@@ -279,9 +274,107 @@ private:
     void createSkyboxDescriptorSetLayout();
     void createSkyboxDescriptorSet();
 
-
     void createSkyboxDescriptorPool();
 
     bool useSolidBackground = false; // default ON
+
+    // Water rendering members
+    std::unique_ptr<WaterMesh> waterMesh;
+    std::unique_ptr<WaterPipeline> waterPipeline;
+
+    void createWaterResources();
+    void createWaterDescriptorSetLayout();
+    void createWaterDescriptorSet();
+    void createWaterDescriptorPool();
+    void createWaterDescriptors();
+    void updateWaterDescriptors();
+    VkImageView loadWaterTexture(const std::string &fileName);
+    void createSceneColorTexture();
+    void createWaterSampler();
+    void createSceneReflectionTexture();
+    void createSceneReflectionRenderPassAndFramebuffer();
+    void createSceneRefractionRenderPassAndFramebuffer();
+    void createSceneRenderPassAndFramebuffer();
+
+    // ============================================================================
+    // WATER RESOURCES — IMAGES / VIEWS / SAMPLERS
+    // ============================================================================
+
+    // Normal map
+    VkImage waterNormalImage = VK_NULL_HANDLE;
+    VkDeviceMemory waterNormalImageMemory = VK_NULL_HANDLE;
+    VkImageView waterNormalImageView = VK_NULL_HANDLE;
+
+    // DUDV map (for refraction distortion)
+    VkImage waterDudvImage = VK_NULL_HANDLE;
+    VkDeviceMemory waterDudvImageMemory = VK_NULL_HANDLE;
+    VkImageView waterDudvImageView = VK_NULL_HANDLE;
+
+    // Caustics animation texture
+    VkImage waterCausticImage = VK_NULL_HANDLE;
+    VkDeviceMemory waterCausticImageMemory = VK_NULL_HANDLE;
+    VkImageView waterCausticImageView = VK_NULL_HANDLE;
+
+    VkSampler waterSampler = VK_NULL_HANDLE;
+
+    VkDescriptorSet waterDescriptorSet = VK_NULL_HANDLE;
+    VkDescriptorSetLayout waterDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool waterDescriptorPool = VK_NULL_HANDLE;
+
+    VkImage sceneColorImage = VK_NULL_HANDLE;
+    VkDeviceMemory sceneColorImageMemory = VK_NULL_HANDLE;
+    VkImageView sceneColorImageView = VK_NULL_HANDLE;
+    VkSampler sceneColorSampler = VK_NULL_HANDLE;
+
+    VkRenderPass sceneRenderPass = VK_NULL_HANDLE;
+    VkFramebuffer sceneFramebuffer = VK_NULL_HANDLE;
+
+    bool sceneOffscreenReady = false;
+
+    float waterSpeed = 1.0f;
+
+    // === WATER COLOR AND SETTINGS ===
+    glm::vec3 waterBaseColor = glm::vec3(0.0f, 0.3f, 0.5f);  // Deep blue/cyan base
+    glm::vec3 waterLightColor = glm::vec3(1.0f, 1.0f, 1.0f); // White directional light
+    float waterAmbient = 0.2f;
+    float waterShininess = 512.0f;
+    float waterCausticIntensity = 2.0f;
+    float waterDistortionStrength = 0.04f;
+    float waterFresnelR0 = 0.02f;
+
+    VkDeviceMemory sceneReflectionImageMemory;
+    VkImageView sceneReflectionImageView;
+    VkSampler sceneReflectionSampler;
+
+    VkDeviceMemory sceneRefractionImageMemory;
+    VkImageView sceneRefractionImageView;
+    VkSampler sceneRefractionSampler;
+
+    VkRenderPass sceneReflectionRenderPass;
+    VkRenderPass sceneRefractionRenderPass;
+
+    VkFramebuffer sceneReflectionFramebuffer;
+    VkFramebuffer sceneRefractionFramebuffer;
+
+    VkImage sceneReflectionImage;
+    VkImage sceneRefractionImage;
+
+    // Extents (Resolution) for the off-screen textures
+    VkExtent2D reflectionExtent = {800, 600};
+    VkExtent2D refractionExtent = {800, 600};
+    glm::mat4 reflectionViewMatrix;
+
+    glm::mat4 calculateProjectionMatrix();
+
+    void recordReflectionPass(CommandBuffer &commandBuffer, uint32_t imageIndex);
+    void recordRefractionPass(CommandBuffer &commandBuffer, uint32_t imageIndex);
+    void insertWaterTextureBarriers(CommandBuffer &commandBuffer);
+
+    void createSceneRefractionTexture();
+    void createImGuiRenderPass();
+    void createImGuiFramebuffers();
+
+    VkRenderPass imguiRenderPass = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> imguiFramebuffers;
 
 };
