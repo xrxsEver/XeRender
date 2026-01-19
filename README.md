@@ -75,6 +75,7 @@ XeRender/
 | `DAEMesh` | General-purpose mesh loading |
 
 ---
+![Sequence 01014](https://github.com/user-attachments/assets/d5a50afb-209a-4900-b998-9b4fa9131a4c)
 
 ## Rendering Pipelines
 
@@ -193,6 +194,8 @@ XeRender provides comprehensive real-time parameter adjustment through ImGui:
 | Density | Sample density | 0.0 - 1.0 |
 | Scale | Pattern scale factor | 0.1 - 2.0 |
 
+![OPT](https://github.com/user-attachments/assets/e50aa231-297e-48a8-8033-6bee2e5382a2)
+
 ### Debug Tools
 - **Particles Debug**: Visualize particle distribution
 - **Rays Debug**: Display ray sampling pattern
@@ -251,6 +254,7 @@ struct WaterPush {
 ```
 
 ---
+![PB](https://github.com/user-attachments/assets/3d902b59-bd18-43de-9bc6-06e8d99d9c6b)
 
 ## Building & Installation
 
