@@ -1,26 +1,28 @@
 #include "SwapChainManager.h"
 #include "VulkanBase.h"
 #include "VulkanUtil.h"
-#include <algorithm> 
+#include <algorithm>
 #include <iostream> // For debugging
 
-SwapChainManager::SwapChainManager(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, GLFWwindow* window)
-	: m_device(device), m_physicalDevice(physicalDevice), m_surface(surface), m_window(window),
-	m_swapChain(VK_NULL_HANDLE), m_swapChainImageFormat(VkFormat::VK_FORMAT_UNDEFINED),
-	m_swapChainExtent({}) {
-	createSwapChain();
-	createImageViews();
+SwapChainManager::SwapChainManager(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, GLFWwindow *window)
+    : m_device(device), m_physicalDevice(physicalDevice), m_surface(surface), m_window(window),
+      m_swapChain(VK_NULL_HANDLE), m_swapChainImageFormat(VkFormat::VK_FORMAT_UNDEFINED),
+      m_swapChainExtent({})
+{
+    createSwapChain();
+    createImageViews();
 }
 
-
-SwapChainManager::~SwapChainManager() {
-	cleanupSwapChain();
+SwapChainManager::~SwapChainManager()
+{
+    cleanupSwapChain();
 }
 
-
-void SwapChainManager::createSwapChain() {
+void SwapChainManager::createSwapChain()
+{
     // Clean up old swapchain if it exists
-    if (m_swapChain != VK_NULL_HANDLE) {
+    if (m_swapChain != VK_NULL_HANDLE)
+    {
         cleanupSwapChain();
     }
 
@@ -34,7 +36,8 @@ void SwapChainManager::createSwapChain() {
 
     // Determine the number of images in the swap chain
     uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
-    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
+    {
         imageCount = swapChainSupport.capabilities.maxImageCount;
     }
 
@@ -50,14 +53,16 @@ void SwapChainManager::createSwapChain() {
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     VkUtils::QueueFamilyIndices indices = VkUtils::FindQueueFamilies(m_physicalDevice, m_surface);
-    uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+    uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
 
-    if (indices.graphicsFamily != indices.presentFamily) {
+    if (indices.graphicsFamily != indices.presentFamily)
+    {
         createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
         createInfo.queueFamilyIndexCount = 2;
         createInfo.pQueueFamilyIndices = queueFamilyIndices;
     }
-    else {
+    else
+    {
         createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     }
 
@@ -69,42 +74,46 @@ void SwapChainManager::createSwapChain() {
 
     // Create the swap chain
     VkResult result = vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapChain);
-    if (result != VK_SUCCESS) {
+    if (result != VK_SUCCESS)
+    {
         std::cerr << "vkCreateSwapchainKHR failed with error: " << result << std::endl;
         throw std::runtime_error("failed to create swap chain!");
     }
 
     // Ensure the swapchain handle is valid
-    if (m_swapChain == VK_NULL_HANDLE) {
+    if (m_swapChain == VK_NULL_HANDLE)
+    {
         throw std::runtime_error("Swapchain handle is VK_NULL_HANDLE after creation!");
     }
 
     // Retrieve the swap chain images
     result = vkGetSwapchainImagesKHR(m_device, m_swapChain, &imageCount, nullptr);
-    if (result != VK_SUCCESS) {
+    if (result != VK_SUCCESS)
+    {
         std::cerr << "First vkGetSwapchainImagesKHR failed with error: " << result << std::endl;
         throw std::runtime_error("failed to get swap chain images count!");
     }
 
     m_swapChainImages.resize(imageCount);
     result = vkGetSwapchainImagesKHR(m_device, m_swapChain, &imageCount, m_swapChainImages.data());
-    if (result != VK_SUCCESS) {
+    if (result != VK_SUCCESS)
+    {
         std::cerr << "Second vkGetSwapchainImagesKHR failed with error: " << result << std::endl;
         throw std::runtime_error("failed to get swap chain images!");
     }
 
-    //std::cout << "Successfully retrieved " << m_swapChainImages.size() << " swapchain images." << std::endl;
+    // std::cout << "Successfully retrieved " << m_swapChainImages.size() << " swapchain images." << std::endl;
 
     m_swapChainImageFormat = surfaceFormat.format;
     m_swapChainExtent = extent;
 }
 
-
-
-void SwapChainManager::createImageViews() {
+void SwapChainManager::createImageViews()
+{
     m_swapChainImageViews.resize(m_swapChainImages.size());
 
-    for (size_t i = 0; i < m_swapChainImages.size(); i++) {
+    for (size_t i = 0; i < m_swapChainImages.size(); i++)
+    {
         VkImageViewCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         createInfo.image = m_swapChainImages[i];
@@ -120,124 +129,149 @@ void SwapChainManager::createImageViews() {
         createInfo.subresourceRange.baseArrayLayer = 0;
         createInfo.subresourceRange.layerCount = 1;
 
-        if (vkCreateImageView(m_device, &createInfo, nullptr, &m_swapChainImageViews[i]) != VK_SUCCESS) {
+        if (vkCreateImageView(m_device, &createInfo, nullptr, &m_swapChainImageViews[i]) != VK_SUCCESS)
+        {
             throw std::runtime_error("failed to create image views!");
         }
-
     }
 }
 
+void SwapChainManager::cleanupSwapChain()
+{
 
-void SwapChainManager::cleanupSwapChain() {
-
-    for (auto imageView : m_swapChainImageViews) {
+    for (auto imageView : m_swapChainImageViews)
+    {
         vkDestroyImageView(m_device, imageView, nullptr);
     }
     m_swapChainImageViews.clear();
 
-    if (m_swapChain != VK_NULL_HANDLE) {
+    if (m_swapChain != VK_NULL_HANDLE)
+    {
         vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
         m_swapChain = VK_NULL_HANDLE;
     }
 }
 
-
-SwapChainSupportDetails SwapChainManager::querySwapChainSupport(VkPhysicalDevice device) {
+SwapChainSupportDetails SwapChainManager::querySwapChainSupport(VkPhysicalDevice device)
+{
     SwapChainSupportDetails details;
 
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, m_surface, &details.capabilities);
-  //std::cout << "Capabilities: \n";
-  //std::cout << "  minImageCount: " << details.capabilities.minImageCount << "\n";
-  //std::cout << "  maxImageCount: " << details.capabilities.maxImageCount << "\n";
-  //std::cout << "  currentExtent: (" << details.capabilities.currentExtent.width << ", " << details.capabilities.currentExtent.height << ")\n";
+    // std::cout << "Capabilities: \n";
+    // std::cout << "  minImageCount: " << details.capabilities.minImageCount << "\n";
+    // std::cout << "  maxImageCount: " << details.capabilities.maxImageCount << "\n";
+    // std::cout << "  currentExtent: (" << details.capabilities.currentExtent.width << ", " << details.capabilities.currentExtent.height << ")\n";
 
     uint32_t formatCount;
     vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, nullptr);
-  // std::cout << "Formats: \n";
-    if (formatCount != 0) {
+    // std::cout << "Formats: \n";
+    if (formatCount != 0)
+    {
         details.formats.resize(formatCount);
         vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, details.formats.data());
-      // for (const auto& format : details.formats) {
-      //     std::cout << "  format: " << format.format << ", colorSpace: " << format.colorSpace << "\n";
-      // }
+        // for (const auto& format : details.formats) {
+        //     std::cout << "  format: " << format.format << ", colorSpace: " << format.colorSpace << "\n";
+        // }
     }
 
     uint32_t presentModeCount;
     vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &presentModeCount, nullptr);
-  //  std::cout << "Present Modes: \n";
-    if (presentModeCount != 0) {
+    //  std::cout << "Present Modes: \n";
+    if (presentModeCount != 0)
+    {
         details.presentModes.resize(presentModeCount);
         vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &presentModeCount, details.presentModes.data());
-      // for (const auto& presentMode : details.presentModes) {
-      //     std::cout << "  presentMode: " << presentMode << "\n";
-      // }
+        // for (const auto& presentMode : details.presentModes) {
+        //     std::cout << "  presentMode: " << presentMode << "\n";
+        // }
     }
 
     return details;
 }
 
-
-
-
-VkSurfaceFormatKHR SwapChainManager::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
+VkSurfaceFormatKHR SwapChainManager::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats)
 {
-	for (const auto& availableFormat : availableFormats) {
-		if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-			return availableFormat;
-		}
-	}
+    for (const auto &availableFormat : availableFormats)
+    {
+        if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        {
+            return availableFormat;
+        }
+    }
 
-	return availableFormats[0];
+    return availableFormats[0];
 }
 
-VkPresentModeKHR SwapChainManager::chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes)
+VkPresentModeKHR SwapChainManager::chooseSwapPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes)
 {
-	for (const auto& availablePresentMode : availablePresentModes) {
-		if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
-			return availablePresentMode;
-		}
-	}
+    // First, try to find VK_PRESENT_MODE_IMMEDIATE_KHR for maximum performance (no VSync)
+    for (const auto &availablePresentMode : availablePresentModes)
+    {
+        if (availablePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+        {
+            std::cout << "Using VK_PRESENT_MODE_IMMEDIATE_KHR (VSync OFF) for maximum performance" << std::endl;
+            return availablePresentMode;
+        }
+    }
 
-	return VK_PRESENT_MODE_FIFO_KHR;
+    // Second choice: VK_PRESENT_MODE_MAILBOX_KHR (triple buffering)
+    for (const auto &availablePresentMode : availablePresentModes)
+    {
+        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+        {
+            std::cout << "Using VK_PRESENT_MODE_MAILBOX_KHR (triple buffering)" << std::endl;
+            return availablePresentMode;
+        }
+    }
+
+    // Fallback: VK_PRESENT_MODE_FIFO_KHR (VSync ON) - guaranteed to be available
+    std::cout << "Using VK_PRESENT_MODE_FIFO_KHR (VSync ON) - fallback mode" << std::endl;
+    return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D SwapChainManager::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
+VkExtent2D SwapChainManager::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities)
 {
-	if (capabilities.currentExtent.width != (std::numeric_limits<uint32_t>::max)()) {
-		return capabilities.currentExtent;
-	}
-	else {
-		int width, height;
-		glfwGetFramebufferSize(m_window, &width, &height);
+    if (capabilities.currentExtent.width != (std::numeric_limits<uint32_t>::max)())
+    {
+        return capabilities.currentExtent;
+    }
+    else
+    {
+        int width, height;
+        glfwGetFramebufferSize(m_window, &width, &height);
 
-		VkExtent2D actualExtent = {
-			static_cast<uint32_t>(width),
-			static_cast<uint32_t>(height)
-		};
+        VkExtent2D actualExtent = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height)};
 
-		actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-		actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+        actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+        actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 
-		return actualExtent;
-	}
+        return actualExtent;
+    }
 }
 
-VkSwapchainKHR SwapChainManager::getSwapChain() const {
-	return m_swapChain;
+VkSwapchainKHR SwapChainManager::getSwapChain() const
+{
+    return m_swapChain;
 }
 
-std::vector<VkImage> SwapChainManager::getSwapChainImages() const {
-	return m_swapChainImages;
+std::vector<VkImage> SwapChainManager::getSwapChainImages() const
+{
+    return m_swapChainImages;
 }
 
-std::vector<VkImageView> SwapChainManager::getSwapChainImageViews() const {
-	return m_swapChainImageViews;
+std::vector<VkImageView> SwapChainManager::getSwapChainImageViews() const
+{
+    return m_swapChainImageViews;
 }
 
-VkFormat SwapChainManager::getSwapChainImageFormat() const {
-	return m_swapChainImageFormat;
+VkFormat SwapChainManager::getSwapChainImageFormat() const
+{
+    return m_swapChainImageFormat;
 }
 
-VkExtent2D SwapChainManager::getSwapChainExtent() const {
-	return m_swapChainExtent;
+VkExtent2D SwapChainManager::getSwapChainExtent() const
+{
+    return m_swapChainExtent;
 }

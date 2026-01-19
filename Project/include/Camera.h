@@ -3,7 +3,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <GLFW/glfw3.h>
 
-class Camera {
+class Camera
+{
 public:
     Camera(glm::vec3 position, glm::vec3 up, float yaw, float pitch);
 
@@ -13,6 +14,22 @@ public:
     void processMouseScroll(float yoffset);
 
     glm::vec3 getPosition() const { return position; }
+
+    // Getters for yaw/pitch (for testing system)
+    float getYaw() const { return yaw; }
+    float getPitch() const { return pitch; }
+
+    // Setters for yaw/pitch (for deterministic camera paths in testing)
+    void setYaw(float newYaw)
+    {
+        yaw = newYaw;
+        updateCameraVectors();
+    }
+    void setPitch(float newPitch)
+    {
+        pitch = newPitch;
+        updateCameraVectors();
+    }
 
     glm::vec3 position;
     glm::vec3 front;

@@ -16,12 +16,22 @@ layout(std140, set = 0, binding = 0) uniform UBO {
 layout(push_constant) uniform WaterPush {
     float time;
     float scale;
+    float debugRays;
+    float _pad1;
     vec4 baseColor;     // RGB color + alpha padding
     vec4 lightColor;    // RGB color + alpha padding
     float ambient;
     float shininess;
     float causticIntensity;
     float distortionStrength;
+    float godRayIntensity;
+    float scatteringIntensity;
+    float opacity;
+    float fogDensity;
+    float godExposure;
+    float godDecay;
+    float godDensity;
+    float godSampleScale;
 } pc;
 
 // Outputs to fragment

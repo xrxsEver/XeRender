@@ -19,6 +19,9 @@
 #include "SkyboxPipeline.h"
 #include "WaterMesh.h"
 #include "WaterPipeline.h"
+#include "UnderwaterWaterPipeline.h"
+#include "OceanBottomMesh.h"
+#include "WaterTestingSystem.h"
 
 // Forward declarations
 class SwapChainManager;
@@ -125,6 +128,7 @@ private:
     float m_Rotation = 0.0f;
 
     bool framebufferResized = false;
+    bool isRecreatingSwapChain = false;
     bool isDeviceSuitable(VkPhysicalDevice device);
     bool checkValidationLayerSupport();
 
@@ -232,8 +236,8 @@ private:
     glm::vec3 light1Color = glm::vec3(1.0f, 1.0f, 1.0f); // White light default color
     float light1Intensity = 3.0f;
 
-    glm::vec3 light0Position = glm::vec3(0.0f, 0.0f, 30.0f);  // Yellow light position
-    glm::vec3 light1Position = glm::vec3(10.0f, 40.0f, 0.0f); // White light position
+    glm::vec3 light0Position = glm::vec3(50.0f, 500.0f, -100.0f); // Sun position - high in sky
+    glm::vec3 light1Position = glm::vec3(10.0f, 40.0f, 0.0f);     // White light position
 
     glm::vec3 ambientColor = glm::vec3(1.0f, 1.0f, 1.0f); // White light default color
     float ambientIntensity = 3.0f;
@@ -281,6 +285,12 @@ private:
     // Water rendering members
     std::unique_ptr<WaterMesh> waterMesh;
     std::unique_ptr<WaterPipeline> waterPipeline;
+
+    // Underwater rendering members
+    std::unique_ptr<UnderwaterWaterPipeline> underwaterWaterPipeline;
+    std::unique_ptr<OceanBottomMesh> oceanBottomMesh;
+    // Full-screen volumetric sunrays pipeline
+    std::unique_ptr<WaterPipeline> sunraysPipeline;
 
     void createWaterResources();
     void createWaterDescriptorSetLayout();
@@ -332,7 +342,7 @@ private:
     bool sceneOffscreenReady = false;
 
     float waterSpeed = 1.0f;
-
+    bool showDebugRays = false;
     // === WATER COLOR AND SETTINGS ===
     glm::vec3 waterBaseColor = glm::vec3(0.0f, 0.3f, 0.5f);  // Deep blue/cyan base
     glm::vec3 waterLightColor = glm::vec3(1.0f, 1.0f, 1.0f); // White directional light
@@ -341,6 +351,27 @@ private:
     float waterCausticIntensity = 2.0f;
     float waterDistortionStrength = 0.04f;
     float waterFresnelR0 = 0.02f;
+    float waterSurfaceOpacity = 0.55f;
+
+    // Underwater specific settings
+    float oceanBottomCausticIntensity = 1.0f;
+    float underwaterGodRayIntensity = 1.0f;
+    float underwaterScatteringIntensity = 0.5f;
+    float underwaterOpacity = 0.9f;
+    float underwaterFogDensity = 0.05f;
+
+    // Marine Snow - suspended particles for scale reference
+    float marineSnowIntensity = 0.5f; // 0 = off, 1 = heavy particulates
+    float marineSnowSize = 1.0f;      // Particle size multiplier
+    float marineSnowSpeed = 1.0f;     // Drift speed
+
+    // Chromatic Aberration - underwater lens effect
+    float chromaticAberrationStrength = 0.15f; // Color separation intensity
+    bool showMarineSnowDebug = false;          // Debug: highlight particles
+    bool showChromaticDebug = false;           // Debug: exaggerate CA
+
+    glm::vec3 underwaterShallowColor = {0.0f, 0.6f, 0.8f};
+    glm::vec3 underwaterDeepColor = {0.0f, 0.1f, 0.25f};
 
     VkDeviceMemory sceneReflectionImageMemory;
     VkImageView sceneReflectionImageView;
@@ -377,4 +408,42 @@ private:
     VkRenderPass imguiRenderPass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> imguiFramebuffers;
 
+    // ============================================================================
+    // WATER TESTING SYSTEM
+    // ============================================================================
+    std::unique_ptr<WaterTestingSystem> waterTestingSystem;
+
+    // Test state tracking
+    bool isTestModeActive = false;
+    int currentTestConfigIndex = 0;
+    int currentTestRunIndex = 0;
+    std::vector<WaterTestConfig> pendingTestConfigs;
+    std::vector<TestRunResult> completedTestResults;
+    std::string testOutputFilePath = "test_results/water_test_results.csv";
+
+    // Test timing - for accurate frame time measurement
+    std::chrono::high_resolution_clock::time_point lastFrameTime;
+    std::chrono::high_resolution_clock::time_point frameStartTimePoint; // Set BEFORE drawFrame
+    double lastCpuTimeMs = 0.0;
+
+    // Benchmark timing - GPU-synchronized frame timing
+    bool isBenchmarkActive = false;
+    double gpuSyncedFrameTimeMs = 16.67; // GPU-synchronized frame time in ms (default ~60fps)
+
+    // Test UI state
+    int selectedTestType = 0; // 0=Performance, 1=ImageQuality, 2=TradeOff, 3=Custom
+    bool autoExportResults = true;
+    bool captureTestScreenshots = false;
+
+    // Methods for testing
+    void initializeWaterTestingSystem();
+    void cleanupWaterTestingSystem();
+    void startWaterTest(const WaterTestConfig &config);
+    void updateWaterTest();
+    void preFrameWaterTestUpdate();  // Camera setup before rendering
+    void postFrameWaterTestUpdate(); // Timing measurement after GPU sync
+    void endWaterTest();
+    void applyTestConfiguration(const WaterTestConfig &config);
+    void renderTestingUI();
+    void exportTestResults();
 };

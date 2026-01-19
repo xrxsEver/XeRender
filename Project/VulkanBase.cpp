@@ -2,6 +2,11 @@
 #define GLFW_INCLUDE_VULKAN
 #define GLFW_EXPOSE_NATIVE_WIN32
 
+// Prevent Windows min/max macros from conflicting with std::min/std::max
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <Lib/stb_image.h>
 
@@ -97,8 +102,12 @@ void VulkanBase::initVulkan()
     createImGuiRenderPass();
 
     createDescriptorSetLayout();
+    createCommandPool(); // Need commandPool for createWaterResources()
+    // Create water resources and descriptor set layout early so graphics pipeline can include it
+    createWaterResources(); // Needs commandPool, so must be after createCommandPool()
+    createWaterSampler();   // Create the sampler for water textures
+    createWaterDescriptorSetLayout();
     createGraphicsPipeline();
-    createCommandPool();
 
     createColorResources();
     createDepthResources();
@@ -136,7 +145,7 @@ void VulkanBase::initVulkan()
     }
     catch (const std::exception &e)
     {
-        throw std::runtime_error(std::string("Failed to create cubemap: ") + e.what()); 
+        throw std::runtime_error(std::string("Failed to create cubemap: ") + e.what());
     }
 
     // 2) Assign to VulkanBase members
@@ -146,20 +155,20 @@ void VulkanBase::initVulkan()
     skyboxSampler = cb.sampler;
 
     // ---- DEBUG CUBEMAP LOADING -------------------------------------------------
-  //     std::cout << "\n=== DEBUG: Cubemap Loaded ===\n";
-  //     std::cout << "Image:   " << cb.image << "\n";
-  //     std::cout << "Memory:  " << cb.memory << "\n";
-  //     std::cout << "View:    " << cb.view << "\n";
-  //     std::cout << "Sampler: " << cb.sampler << "\n";
-  //    
-  //     // I can also check if each face was written correctly (ModelLoader printed them)
-  //     std::cout << "Check ModelLoader output above for 'face[0..5] first pixel RGBA'.\n";
-  //    
-  //     std::cout << "\n=== DEBUG: Assigned Cubemap To VulkanBase ===\n";
-  //     std::cout << "skyboxImage       = " << skyboxImage << "\n";
-  //     std::cout << "skyboxImageMemory = " << skyboxImageMemory << "\n";
-  //     std::cout << "skyboxImageView   = " << skyboxImageView << "\n";
-  //     std::cout << "skyboxSampler     = " << skyboxSampler << "\n";
+    //     std::cout << "\n=== DEBUG: Cubemap Loaded ===\n";
+    //     std::cout << "Image:   " << cb.image << "\n";
+    //     std::cout << "Memory:  " << cb.memory << "\n";
+    //     std::cout << "View:    " << cb.view << "\n";
+    //     std::cout << "Sampler: " << cb.sampler << "\n";
+    //
+    //     // I can also check if each face was written correctly (ModelLoader printed them)
+    //     std::cout << "Check ModelLoader output above for 'face[0..5] first pixel RGBA'.\n";
+    //
+    //     std::cout << "\n=== DEBUG: Assigned Cubemap To VulkanBase ===\n";
+    //     std::cout << "skyboxImage       = " << skyboxImage << "\n";
+    //     std::cout << "skyboxImageMemory = " << skyboxImageMemory << "\n";
+    //     std::cout << "skyboxImageView   = " << skyboxImageView << "\n";
+    //     std::cout << "skyboxSampler     = " << skyboxSampler << "\n";
 
     // Quick sanity: ensure loader returned valid handles
     if (skyboxImage == VK_NULL_HANDLE || skyboxImageView == VK_NULL_HANDLE || skyboxSampler == VK_NULL_HANDLE)
@@ -177,10 +186,10 @@ void VulkanBase::initVulkan()
     createSkyboxDescriptorSet();       // will now succeed because imageView & sampler are valid
 
     // 5) Create skybox pipeline (needs descriptor set layout and renderPass)
-  //  std::cout << "[DEBUG] initVulkan: About to create skybox pipeline\n";
-  //  std::cout << "[DEBUG] initVulkan: renderPass = " << renderPass << "\n";
-  //  std::cout << "[DEBUG] initVulkan: imguiRenderPass = " << imguiRenderPass << "\n";
-  //  std::cout << "[DEBUG] initVulkan: msaaSamples = " << msaaSamples << "\n";
+    //  std::cout << "[DEBUG] initVulkan: About to create skybox pipeline\n";
+    //  std::cout << "[DEBUG] initVulkan: renderPass = " << renderPass << "\n";
+    //  std::cout << "[DEBUG] initVulkan: imguiRenderPass = " << imguiRenderPass << "\n";
+    //  std::cout << "[DEBUG] initVulkan: msaaSamples = " << msaaSamples << "\n";
 
     if (renderPass == imguiRenderPass)
     {
@@ -220,9 +229,9 @@ void VulkanBase::initVulkan()
 
     loadModel();
 
-    createSceneColorTexture(); 
+    createSceneColorTexture();
 
-    createSceneRenderPassAndFramebuffer(); 
+    createSceneRenderPassAndFramebuffer();
 
     createSceneReflectionTexture(); // Creates sceneReflectionImage/View/Sampler
     createSceneReflectionRenderPassAndFramebuffer();
@@ -239,17 +248,18 @@ void VulkanBase::initVulkan()
 
     // --------- WATER INIT ---------
     waterMesh = std::make_unique<WaterMesh>();
-    waterMesh->create(device, physicalDevice, commandPool.getVkCommandPool(), graphicsQueue, 256, 500.0f); // Large water plane for visible rendering
-    createWaterResources();
+    // Make the water plane much larger so it appears effectively unlimited from the camera.
+    // Note: increasing resolution increases memory and GPU cost. Adjust resolution if needed.
+    waterMesh->create(device, physicalDevice, commandPool.getVkCommandPool(), graphicsQueue, 512, 20000.0f); // 512 resolution, 20k units world size
+    // Note: createWaterResources() and createWaterDescriptorSetLayout() are now called earlier in initVulkan()
 
-    createWaterDescriptorSetLayout();
     createWaterDescriptorSet();
 
     // DEBUG: Verify MSAA samples
- //  std::cout << "\n=== WATER PIPELINE CREATION DEBUG ===\n";
- //  std::cout << "msaaSamples: " << msaaSamples << " (should be 8)\n";
- //  std::cout << "renderPass: " << renderPass << "\n";
- //  std::cout << "imguiRenderPass: " << imguiRenderPass << "\n";
+    //  std::cout << "\n=== WATER PIPELINE CREATION DEBUG ===\n";
+    //  std::cout << "msaaSamples: " << msaaSamples << " (should be 8)\n";
+    //  std::cout << "renderPass: " << renderPass << "\n";
+    //  std::cout << "imguiRenderPass: " << imguiRenderPass << "\n";
 
     if (renderPass == imguiRenderPass)
     {
@@ -267,9 +277,10 @@ void VulkanBase::initVulkan()
         device,
         swapChainManager->getSwapChainExtent(),
         renderPass,
-        descriptorSetLayout,      
+        descriptorSetLayout,
         waterDescriptorSetLayout,
-        msaaSamples);
+        msaaSamples,
+        false);
 
     std::cout << "Water pipeline created successfully\n";
     std::cout << "Water pipeline layout: " << waterPipeline->layout << "\n";
@@ -277,8 +288,43 @@ void VulkanBase::initVulkan()
     std::cout << "===================================\n\n";
     // ---------------------------------------------------
 
+    // --------- UNDERWATER WATER PIPELINE INIT ---------
+    underwaterWaterPipeline = std::make_unique<UnderwaterWaterPipeline>();
+    underwaterWaterPipeline->create(
+        device,
+        swapChainManager->getSwapChainExtent(),
+        renderPass,
+        descriptorSetLayout,
+        waterDescriptorSetLayout,
+        msaaSamples,
+        true);
+    std::cout << "Underwater water pipeline created successfully\n";
+
+    // --------- SUNRAYS FULL-SCREEN PIPELINE INIT ---------
+    // Uses sunrays.vert/sunrays.frag via WaterPipeline with isSunraysPipeline=true
+    sunraysPipeline = std::make_unique<WaterPipeline>();
+    sunraysPipeline->create(
+        device,
+        swapChainManager->getSwapChainExtent(),
+        renderPass,
+        descriptorSetLayout,
+        waterDescriptorSetLayout,
+        msaaSamples,
+        /*isSunraysPipeline=*/true);
+    std::cout << "Sunrays pipeline created successfully\n";
+
+    // --------- OCEAN BOTTOM MESH INIT ---------
+    oceanBottomMesh = std::make_unique<OceanBottomMesh>();
+    oceanBottomMesh->create(device, physicalDevice, commandPool.getVkCommandPool(), graphicsQueue, 256, 20000.0f, -50.0f);
+    std::cout << "Ocean bottom mesh created successfully\n";
+    // ---------------------------------------------------
+
     createCommandBuffers();
     createSyncObjects();
+
+    // --------- WATER TESTING SYSTEM INIT ---------
+    initializeWaterTestingSystem();
+    // ---------------------------------------------
 }
 
 void VulkanBase::initImGui()
@@ -306,7 +352,7 @@ void VulkanBase::initImGui()
     init_info.Subpass = 0;
     init_info.MinImageCount = 2;
     init_info.ImageCount = swapChainManager->getSwapChainImages().size();
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT; 
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator = nullptr;
     init_info.CheckVkResultFn = [](VkResult err)
     {
@@ -328,8 +374,8 @@ void VulkanBase::initImGui()
 
     // Initialize ImGui Vulkan binding
     // ImGui_ImplVulkan_Init(&init_info, renderPass);
-  // std::cout << "[DEBUG] initImGui: Initializing ImGui with imguiRenderPass (1-sample)\n";
-  // std::cout << "[DEBUG] initImGui: ImGui MSAASamples = " << init_info.MSAASamples << " (should be VK_SAMPLE_COUNT_1_BIT = 1)\n";
+    // std::cout << "[DEBUG] initImGui: Initializing ImGui with imguiRenderPass (1-sample)\n";
+    // std::cout << "[DEBUG] initImGui: ImGui MSAASamples = " << init_info.MSAASamples << " (should be VK_SAMPLE_COUNT_1_BIT = 1)\n";
     ImGui_ImplVulkan_Init(&init_info, imguiRenderPass);
 
     // Upload Fonts
@@ -354,8 +400,56 @@ void VulkanBase::mainLoop()
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
-        processInput(deltaTime);
+        // Pre-frame update for water testing (camera positioning only)
+        if (isTestModeActive)
+        {
+            preFrameWaterTestUpdate();
+
+            // START timing BEFORE drawFrame - this is when the frame begins
+            frameStartTimePoint = std::chrono::high_resolution_clock::now();
+        }
+        else if (isBenchmarkActive)
+        {
+            // For Quick Benchmark, also measure GPU-synced time
+            frameStartTimePoint = std::chrono::high_resolution_clock::now();
+            processInput(deltaTime);
+        }
+        else
+        {
+            processInput(deltaTime);
+        }
+
         drawFrame();
+
+        // During testing, force GPU synchronization to get accurate frame timing
+        // Without this, the GPU has multiple frames in flight and we only measure CPU submission time
+        if (isTestModeActive)
+        {
+            // Wait for GPU to finish ALL work - this is critical for accurate timing
+            vkQueueWaitIdle(graphicsQueue);
+
+            // Fetch GPU timing results AFTER GPU has finished (timestamps are now valid)
+            if (waterTestingSystem)
+            {
+                waterTestingSystem->readGpuTimestamps();
+            }
+
+            // NOW measure time - from before drawFrame to after GPU is done
+            auto frameEndTime = std::chrono::high_resolution_clock::now();
+            lastCpuTimeMs = std::chrono::duration<double, std::milli>(frameEndTime - frameStartTimePoint).count();
+
+            postFrameWaterTestUpdate();
+        }
+        else if (isBenchmarkActive)
+        {
+            // Wait for GPU to finish ALL work - critical for accurate benchmark timing
+            vkQueueWaitIdle(graphicsQueue);
+
+            // Measure GPU-synced frame time
+            auto frameEndTime = std::chrono::high_resolution_clock::now();
+            gpuSyncedFrameTimeMs = std::chrono::duration<double, std::milli>(frameEndTime - frameStartTimePoint).count();
+        }
+
         takeScreenshot();
     }
 
@@ -367,6 +461,9 @@ void VulkanBase::cleanup()
 
     // Wait for the device to be idle before starting the cleanup process
     vkDeviceWaitIdle(device);
+
+    // Cleanup water testing system first
+    cleanupWaterTestingSystem();
 
     ImGui::DestroyContext();
 
@@ -480,6 +577,11 @@ void VulkanBase::cleanup()
     }
 
     // Water cleanup (if created)
+    if (waterSampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(device, waterSampler, nullptr);
+        waterSampler = VK_NULL_HANDLE;
+    }
     if (waterDescriptorSetLayout != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorSetLayout(device, waterDescriptorSetLayout, nullptr);
@@ -504,6 +606,16 @@ void VulkanBase::cleanup()
     {
         waterMesh->destroy(device);
         waterMesh.reset();
+    }
+    if (underwaterWaterPipeline)
+    {
+        underwaterWaterPipeline->destroy(device);
+        underwaterWaterPipeline.reset();
+    }
+    if (oceanBottomMesh)
+    {
+        oceanBottomMesh->destroy(device);
+        oceanBottomMesh.reset();
     }
     for (auto fb : imguiFramebuffers)
         vkDestroyFramebuffer(device, fb, nullptr);
@@ -746,9 +858,9 @@ void VulkanBase::createRenderPass()
     }
 
     // DEBUG: Verify render pass was created successfully
-  // std::cout << "[DEBUG] createRenderPass: Main render pass created with handle: " << renderPass << "\n";
-  // std::cout << "[DEBUG] createRenderPass: Color attachment samples: " << msaaSamples << "\n";
-  // std::cout << "[DEBUG] createRenderPass: Depth attachment samples: " << msaaSamples << "\n";
+    // std::cout << "[DEBUG] createRenderPass: Main render pass created with handle: " << renderPass << "\n";
+    // std::cout << "[DEBUG] createRenderPass: Color attachment samples: " << msaaSamples << "\n";
+    // std::cout << "[DEBUG] createRenderPass: Depth attachment samples: " << msaaSamples << "\n";
 }
 
 void VulkanBase::createImGuiRenderPass()
@@ -783,9 +895,9 @@ void VulkanBase::createImGuiRenderPass()
         throw std::runtime_error("failed to create ImGui render pass!");
 
     // DEBUG: Verify ImGui render pass was created successfully and is different from main
-//   std::cout << "[DEBUG] createImGuiRenderPass: ImGui render pass created with handle: " << imguiRenderPass << "\n";
-//   std::cout << "[DEBUG] createImGuiRenderPass: Samples: VK_SAMPLE_COUNT_1_BIT\n";
-//   std::cout << "[DEBUG] Main renderPass handle: " << renderPass << "\n";
+    //   std::cout << "[DEBUG] createImGuiRenderPass: ImGui render pass created with handle: " << imguiRenderPass << "\n";
+    //   std::cout << "[DEBUG] createImGuiRenderPass: Samples: VK_SAMPLE_COUNT_1_BIT\n";
+    //   std::cout << "[DEBUG] Main renderPass handle: " << renderPass << "\n";
 }
 
 void VulkanBase::createImGuiFramebuffers()
@@ -844,6 +956,8 @@ void VulkanBase::pickPhysicalDevice()
         VkPhysicalDeviceProperties deviceProperties;
         vkGetPhysicalDeviceProperties(device, &deviceProperties);
 
+        std::cout << "Found GPU: " << deviceProperties.deviceName << std::endl;
+
         // Check if the device is an NVIDIA RTX GPU
         bool isNvidiaRTX = (std::string(deviceProperties.deviceName).find("NVIDIA") != std::string::npos) &&
                            (std::string(deviceProperties.deviceName).find("RTX") != std::string::npos);
@@ -851,6 +965,7 @@ void VulkanBase::pickPhysicalDevice()
         if (isNvidiaRTX && isDeviceSuitable(device))
         {
             selectedDevice = device;
+            std::cout << "Selected NVIDIA RTX GPU: " << deviceProperties.deviceName << std::endl;
             break; // Since we found an RTX, we can stop searching
         }
     }
@@ -921,6 +1036,13 @@ void VulkanBase::framebufferResizeCallback(GLFWwindow *window, int width, int he
 {
     auto app = reinterpret_cast<VulkanBase *>(glfwGetWindowUserPointer(window));
     app->framebufferResized = true;
+    // Immediately flag that we're in a recreation state to stop all rendering
+    app->isRecreatingSwapChain = true;
+    // Mark water mesh as invalid immediately
+    if (app->waterMesh)
+    {
+        app->waterMesh->setValid(false);
+    }
 }
 
 void VulkanBase::createFrameBuffers()
@@ -1061,37 +1183,83 @@ void VulkanBase::createIndexBuffer()
 
 void VulkanBase::recordCommandBuffer(CommandBuffer &commandBuffer, uint32_t imageIndex)
 {
+    // SAFETY: Skip command buffer recording entirely during swap chain recreation
+    // to prevent accessing destroyed resources (images, descriptor sets, etc.)
+    if (isRecreatingSwapChain)
+    {
+        return;
+    }
+
     if (imageIndex >= commandBuffers.size() || imageIndex >= swapChainFramebuffers.size() || imageIndex >= descriptorSets.size())
     {
         throw std::out_of_range("imageIndex is out of range.");
     }
 
+    // ==============================================================================
+    struct alignas(16) WaterPushConstant
+    {
+        float time;
+        float scale;
+        float debugRays;
+        float renderingMode;  // 0=BL, 1=PB, 2=OPT
+        glm::vec4 baseColor;  // Used for SHALLOW Color
+        glm::vec4 lightColor; // Used for DEEP Color (repurposed)
+        float ambient;
+        float shininess;
+        float causticIntensity;
+        float distortionStrength;
+        float godRayIntensity;
+        float scatteringIntensity;
+        float opacity;
+        float fogDensity;
+        // God-ray tuning parameters (added to match shader push-constant expectations)
+        float godExposure;
+        float godDecay;
+        float godDensity;
+        float godSampleScale;
+    };
+
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     commandBuffer.begin(&beginInfo);
-    // ==============================================================================
-    // >>> CRITICAL MISSING STEPS: WATER PRE-PASSES <<<
-    // NOTE: These passes are currently disabled because the pipelines created for the
-    // main render pass are incompatible with these off-screen render passes.
-    // They would need separate pipelines to work correctly.
-    // 1. REFLECTION PASS (Draws scene into reflection texture)
-    // this->recordReflectionPass(commandBuffer, imageIndex);
 
-    // 2. REFRACTION PASS (Draws scene into refraction texture)
-    // this->recordRefractionPass(commandBuffer, imageIndex);
-
-    // 3. IMAGE BARRIERS (Transitions textures for reading)
-    // this->insertWaterTextureBarriers(commandBuffer);
-    // ==============================================================================
-    if (useSolidBackground)
+    // === START GPU TIMER (for accurate GPU timing during tests) ===
+    if (waterTestingSystem && isTestModeActive)
     {
-        // Use the color from the ImGui color picker
+        waterTestingSystem->resetTimestampQueries(commandBuffer.getVkCommandBuffer());
+        waterTestingSystem->writeTimestampStart(commandBuffer.getVkCommandBuffer());
+    }
+
+    static glm::vec3 underwaterShallowColor = {0.0f, 0.6f, 0.8f}; // Bright Teal
+    static glm::vec3 underwaterDeepColor = {0.0f, 0.1f, 0.25f};   // Dark Blue
+
+    // Determine if camera is underwater
+    float waterHeight = 0.0f;
+    bool isUnderwater = camera.position.y < waterHeight - 0.1f;
+    static bool showDebugRays = false;
+    // Persistent tuning controls (editable in ImGui; values persist between frames)
+    static float godExposure = 0.6f;
+    static float godDecay = 0.96f;
+    static float godDensity = 0.5f;
+    static float godSampleScale = 1.0f;
+
+    // Underwater rendering mode selection
+    static int currentRenderingMode = 0; // 0=BL, 1=PB, 2=OPT
+    static const char *renderingModes[] = {"BL (Baseline)", "PB (Physically-Based)", "OPT (Optimized)"};
+    // --- 1. SET CLEAR COLOR TO DEEP COLOR IF UNDERWATER ---
+    // This is CRITICAL. The background must match the deep fog to hide seams.
+    if (isUnderwater)
+    {
+        clearColor.color = {{underwaterDeepColor.r, underwaterDeepColor.g, underwaterDeepColor.b, 1.0f}};
+    }
+    else if (useSolidBackground)
+    {
         clearColor.color = {{backgroundColor.x, backgroundColor.y, backgroundColor.z, backgroundColor.w}};
     }
     else
     {
-        // Clear to black so the skybox is visible
         clearColor.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     }
 
@@ -1103,80 +1271,216 @@ void VulkanBase::recordCommandBuffer(CommandBuffer &commandBuffer, uint32_t imag
     renderPassInfo.renderArea.extent = swapChainManager->getSwapChainExtent();
 
     std::array<VkClearValue, 3> clearValues{};
-    clearValues[0] = clearColor;                       // MSAA color attachment clear
-    clearValues[1].depthStencil = {1.0f, 0};           // depth clear
-    clearValues[2].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // resolve attachment clear (or same as clearColor)
+    clearValues[0] = clearColor;
+    clearValues[1].depthStencil = {1.0f, 0};
+    clearValues[2] = clearColor;
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
-
-    // ... (rest of renderPassInfo setup) ...
 
     commandBuffer.beginRenderPass(renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     // DEBUG: Verify we're in the correct render pass
-  //  std::cout << "[DEBUG] Main render pass started. renderPass handle: " << renderPass
-  //            << " (should be non-null)\n";
+    //  std::cout << "[DEBUG] Main render pass started. renderPass handle: " << renderPass
+    //            << " (should be non-null)\n";
 
     // ------------------------------------------------------------------
-    // === 1. DRAW SCENE OBJECTS (Skybox + Terrain/Models) ===
-    // Draw all non-water geometry first so they appear behind water
-    this->DrawSceneObjects(commandBuffer, imageIndex);
-    // ------------------------------------------------------------------
 
-    // ---- 2. DRAW WATER ON TOP ----
-    // Bind water pipeline
-//    std::cout << "[DEBUG] About to bind water pipeline: " << waterPipeline->pipeline << "\n";
-//   std::cout << "[DEBUG] Current renderPass should be: " << renderPass << "\n";
-    waterPipeline->bind(commandBuffer.getVkCommandBuffer());
-
-    // Descriptor sets: set0 = camera/UBO descriptor, set1 = water textures
-    std::array<VkDescriptorSet, 2> waterSets = {descriptorSets[imageIndex], waterDescriptorSet};
-    vkCmdBindDescriptorSets(
-        commandBuffer.getVkCommandBuffer(),
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        waterPipeline->layout,
-        0,
-        static_cast<uint32_t>(waterSets.size()),
-        waterSets.data(),
-        0,
-        nullptr);
-
-    // Push constant: time, scale, and water settings (std140 layout = 64 bytes)
-    struct alignas(16) WaterPushConstant
+    if (isUnderwater)
     {
-        float time;
-        float scale;
-        glm::vec4 baseColor;  // RGB color + alpha padding (16-byte aligned)
-        glm::vec4 lightColor; // RGB color + alpha padding (16-byte aligned)
-        float ambient;
-        float shininess;
-        float causticIntensity;
-        float distortionStrength;
-    };
+        // Performance optimization based on rendering mode
+        float qualityMultiplier = 1.0f;
+        bool enableAdvancedEffects = true;
+        bool skipOceanBottom = false;
 
-    WaterPushConstant waterPushData{};
-    waterPushData.time = static_cast<float>(glfwGetTime()) * waterSpeed;
-    waterPushData.scale = 1.0f;
-    waterPushData.baseColor = glm::vec4(waterBaseColor, 1.0f);
-    waterPushData.lightColor = glm::vec4(waterLightColor, 1.0f);
-    waterPushData.ambient = waterAmbient;
-    waterPushData.shininess = waterShininess;
-    waterPushData.causticIntensity = waterCausticIntensity;
-    waterPushData.distortionStrength = waterDistortionStrength;
+        switch (currentRenderingMode)
+        {
+        case 0: // BL (Baseline) - Simple performance mode
+            qualityMultiplier = 0.4f;
+            enableAdvancedEffects = false;
+            skipOceanBottom = true; // Skip ocean bottom for performance
+            break;
+        case 1: // PB (Physically-Based) - Full quality
+            qualityMultiplier = 1.2f;
+            enableAdvancedEffects = true;
+            break;
+        case 2: // OPT (Optimized) - High quality with optimizations
+            qualityMultiplier = 1.0f;
+            enableAdvancedEffects = true;
+            break;
+        }
 
-    vkCmdPushConstants(
-        commandBuffer.getVkCommandBuffer(),
-        waterPipeline->layout,
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        0,
-        sizeof(WaterPushConstant),
-        &waterPushData);
+        // Push constant struct (Aligned to 16 bytes for GPU)
+        WaterPushConstant underwaterWaterPushData{};
+        underwaterWaterPushData.time = static_cast<float>(glfwGetTime()) * waterSpeed;
+        underwaterWaterPushData.scale = 1.0f;
+        underwaterWaterPushData.renderingMode = static_cast<float>(currentRenderingMode);
+        underwaterWaterPushData.baseColor = glm::vec4(underwaterShallowColor, 1.0f);
+        underwaterWaterPushData.lightColor = glm::vec4(underwaterDeepColor, 1.0f);
 
-    // Draw the water mesh
-    waterMesh->draw(commandBuffer.getVkCommandBuffer());
-    // ---- END DRAW WATER ----
+        // Repurpose ambient for chromatic aberration strength
+        underwaterWaterPushData.ambient = chromaticAberrationStrength;
+        // Repurpose shininess for marine snow size (multiply by 100 to get reasonable range in shader)
+        underwaterWaterPushData.shininess = marineSnowSize * 100.0f;
 
-    // End render pass before ImGui setup
+        underwaterWaterPushData.causticIntensity = enableAdvancedEffects ? oceanBottomCausticIntensity * qualityMultiplier : 0.0f;
+        underwaterWaterPushData.distortionStrength = waterDistortionStrength * (enableAdvancedEffects ? 1.0f : 0.5f);
+        // Respect user setting; allow zero intensity to truly disable rays
+        underwaterWaterPushData.godRayIntensity = underwaterGodRayIntensity * qualityMultiplier;
+
+        // Repurpose scatteringIntensity for marine snow intensity
+        underwaterWaterPushData.scatteringIntensity = marineSnowIntensity * qualityMultiplier;
+
+        // Underwater volumetric strength (do not clamp; user may want subtle fog)
+        underwaterWaterPushData.opacity = underwaterOpacity;
+        underwaterWaterPushData.fogDensity = underwaterFogDensity * (enableAdvancedEffects ? 1.0f : 0.7f);
+        // God-ray tuning with performance adjustments
+        underwaterWaterPushData.godExposure = godExposure * qualityMultiplier;
+        underwaterWaterPushData.godDecay = currentRenderingMode == 0 ? 0.98f : godDecay; // Faster decay for baseline
+        underwaterWaterPushData.godDensity = godDensity * qualityMultiplier;
+        underwaterWaterPushData.godSampleScale = godSampleScale * (currentRenderingMode == 0 ? 0.5f : 1.0f);
+
+        // Debug flags encoded in debugRays: 0=off, 1=rays, 2=snow, 3=both, 4+=chromatic
+        float debugValue = 0.0f;
+        if (showDebugRays)
+            debugValue = 1.0f;
+        if (showMarineSnowDebug)
+            debugValue = 2.0f;
+        if (showDebugRays && showMarineSnowDebug)
+            debugValue = 3.0f;
+        if (showChromaticDebug)
+            debugValue = 4.0f;
+        underwaterWaterPushData.debugRays = debugValue;
+
+        // 1. Draw ocean bottom first (skip for baseline mode for performance)
+        if (!skipOceanBottom)
+        {
+            vkCmdBindPipeline(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+            std::array<VkDescriptorSet, 2> oceanBottomSets = {descriptorSets[imageIndex], waterDescriptorSet};
+            vkCmdBindDescriptorSets(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout, 0, 2, oceanBottomSets.data(), 0, nullptr);
+
+            vkCmdPushConstants(commandBuffer.getVkCommandBuffer(), pipelineLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(WaterPushConstant), &underwaterWaterPushData);
+
+            oceanBottomMesh->draw(commandBuffer.getVkCommandBuffer());
+        }
+
+        // 2. Draw scene objects
+        this->DrawSceneObjects(commandBuffer, imageIndex);
+
+        // 3. Draw Water Surface (always use the water surface shader)
+        if (waterPipeline && waterMesh && waterMesh->getValid())
+        {
+            waterPipeline->bind(commandBuffer.getVkCommandBuffer());
+
+            std::array<VkDescriptorSet, 2> waterSets = {descriptorSets[imageIndex], waterDescriptorSet};
+            vkCmdBindDescriptorSets(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    waterPipeline->layout, 0, static_cast<uint32_t>(waterSets.size()),
+                                    waterSets.data(), 0, nullptr);
+
+            WaterPushConstant waterData{};
+            waterData.time = static_cast<float>(glfwGetTime()) * waterSpeed;
+            waterData.scale = 1.0f;
+            waterData.renderingMode = static_cast<float>(currentRenderingMode);
+            waterData.baseColor = glm::vec4(waterBaseColor, 1.0f);
+            waterData.lightColor = glm::vec4(waterLightColor, 1.0f);
+            waterData.ambient = waterAmbient;
+            waterData.shininess = waterShininess;
+            waterData.causticIntensity = enableAdvancedEffects ? waterCausticIntensity * qualityMultiplier : 0.0f;
+            waterData.distortionStrength = waterDistortionStrength * (enableAdvancedEffects ? 1.0f : 0.6f);
+            waterData.godRayIntensity = 0.0f;
+            waterData.scatteringIntensity = 0.0f;
+            waterData.opacity = waterSurfaceOpacity;
+            waterData.fogDensity = underwaterFogDensity; // used for underside absorption
+            waterData.debugRays = 0.0f;
+            waterData.godExposure = godExposure;
+            waterData.godDecay = godDecay;
+            waterData.godDensity = godDensity;
+            waterData.godSampleScale = godSampleScale;
+
+            vkCmdPushConstants(commandBuffer.getVkCommandBuffer(), waterPipeline->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(WaterPushConstant), &waterData);
+
+            waterMesh->draw(commandBuffer.getVkCommandBuffer());
+        }
+
+        // 4. Underwater volumetric fog/scattering pass (fullscreen, alpha blended)
+        if (underwaterWaterPipeline && (enableAdvancedEffects || currentRenderingMode == 0))
+        {
+            underwaterWaterPipeline->bind(commandBuffer.getVkCommandBuffer());
+            std::array<VkDescriptorSet, 2> uwSets = {descriptorSets[imageIndex], waterDescriptorSet};
+            vkCmdBindDescriptorSets(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    underwaterWaterPipeline->layout, 0, static_cast<uint32_t>(uwSets.size()),
+                                    uwSets.data(), 0, nullptr);
+            vkCmdPushConstants(commandBuffer.getVkCommandBuffer(), underwaterWaterPipeline->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(WaterPushConstant), &underwaterWaterPushData);
+            vkCmdDraw(commandBuffer.getVkCommandBuffer(), 3, 1, 0, 0);
+        }
+
+        // 5. God rays pass (fullscreen additive) - Quality based on mode
+        if (sunraysPipeline && underwaterGodRayIntensity > 0.01f)
+        {
+            sunraysPipeline->bind(commandBuffer.getVkCommandBuffer());
+            std::array<VkDescriptorSet, 2> sunraySets = {descriptorSets[imageIndex], waterDescriptorSet};
+            vkCmdBindDescriptorSets(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    sunraysPipeline->layout, 0, static_cast<uint32_t>(sunraySets.size()),
+                                    sunraySets.data(), 0, nullptr);
+            vkCmdPushConstants(commandBuffer.getVkCommandBuffer(), sunraysPipeline->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(WaterPushConstant), &underwaterWaterPushData);
+            vkCmdDraw(commandBuffer.getVkCommandBuffer(), 3, 1, 0, 0);
+        }
+    }
+    else
+    {
+        // === ABOVE WATER RENDERING ===
+
+        // 1. Draw Scene
+        this->DrawSceneObjects(commandBuffer, imageIndex);
+
+        // 2. Draw Water Surface (skip if mesh is invalid during resize)
+        if (waterPipeline && waterMesh && waterMesh->getValid())
+        {
+            waterPipeline->bind(commandBuffer.getVkCommandBuffer());
+
+            std::array<VkDescriptorSet, 2> waterSets = {descriptorSets[imageIndex], waterDescriptorSet};
+            vkCmdBindDescriptorSets(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    waterPipeline->layout, 0, static_cast<uint32_t>(waterSets.size()),
+                                    waterSets.data(), 0, nullptr);
+
+            WaterPushConstant waterData{};
+            waterData.time = static_cast<float>(glfwGetTime()) * waterSpeed;
+            waterData.scale = 1.0f;
+            waterData.baseColor = glm::vec4(waterBaseColor, 1.0f);
+            waterData.lightColor = glm::vec4(waterLightColor, 1.0f);
+            waterData.ambient = waterAmbient;
+            waterData.shininess = waterShininess;
+            waterData.causticIntensity = waterCausticIntensity;
+            waterData.distortionStrength = waterDistortionStrength;
+            waterData.godRayIntensity = 0.0f;
+            waterData.scatteringIntensity = 0.0f;
+            waterData.opacity = waterSurfaceOpacity;
+            waterData.fogDensity = 0.0f;
+            waterData.debugRays = showDebugRays ? 1.0f : 0.0f;
+            // Above-water god-ray tuning (kept in push constants too)
+            waterData.godExposure = godExposure;
+            waterData.godDecay = godDecay;
+            waterData.godDensity = godDensity;
+            waterData.godSampleScale = godSampleScale;
+
+            vkCmdPushConstants(commandBuffer.getVkCommandBuffer(), waterPipeline->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(WaterPushConstant), &waterData);
+
+            waterMesh->draw(commandBuffer.getVkCommandBuffer());
+        }
+    }
+
+    // End render pass before ImGui setup (shared for both underwater and above water)
     commandBuffer.endRenderPass();
 
     // Now setup ImGui frame (outside of render pass)
@@ -1184,210 +1488,417 @@ void VulkanBase::recordCommandBuffer(CommandBuffer &commandBuffer, uint32_t imag
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(300, ImGui::GetIO().DisplaySize.y));
+    // =========================================================================
+    // COLLAPSIBLE PANEL STATE & ANIMATION
+    // =========================================================================
+    static bool panelOpen = true;
+    static float panelAnim = 1.0f;
+    static bool keyPressed = false;
+    const float PANEL_WIDTH = 260.0f;
+    const float COLLAPSED_WIDTH = 42.0f;
 
-    // Apply overall style
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.2f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.0f, 0.5f, 0.0f, 0.3f));
-    ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(0.0f, 0.8f, 0.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.5f, 0.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.5f, 0.0f, 0.7f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.0f, 0.8f, 0.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
-
-    ImGui::Begin("Control Panel", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
-
-    if (ImGui::BeginTabBar("ControlTabs"))
+    // Toggle with ` key (grave accent / tilde)
+    if (glfwGetKey(window, GLFW_KEY_GRAVE_ACCENT) == GLFW_PRESS && !keyPressed)
     {
+        panelOpen = !panelOpen;
+        keyPressed = true;
+    }
+    if (glfwGetKey(window, GLFW_KEY_GRAVE_ACCENT) == GLFW_RELEASE)
+        keyPressed = false;
 
-        // First tab for general controls
-        if (ImGui::BeginTabItem("General"))
+    // Smooth animation
+    float target = panelOpen ? 1.0f : 0.0f;
+    panelAnim += (target - panelAnim) * ImGui::GetIO().DeltaTime * 12.0f;
+    float ease = panelAnim * panelAnim * (3.0f - 2.0f * panelAnim);
+    float currentWidth = COLLAPSED_WIDTH + (PANEL_WIDTH - COLLAPSED_WIDTH) * ease;
+
+    // =========================================================================
+    // MODERN DARK THEME
+    // =========================================================================
+    ImGuiStyle &style = ImGui::GetStyle();
+    style.WindowRounding = 0.0f;
+    style.FrameRounding = 6.0f;
+    style.GrabRounding = 6.0f;
+    style.ScrollbarRounding = 6.0f;
+    style.TabRounding = 6.0f;
+    style.WindowPadding = ImVec2(12, 10);
+    style.FramePadding = ImVec2(10, 5);
+    style.ItemSpacing = ImVec2(8, 5);
+    style.ScrollbarSize = 10.0f;
+    style.GrabMinSize = 10.0f;
+
+    // Colors
+    ImVec4 bg = ImVec4(0.07f, 0.07f, 0.09f, 0.97f);
+    ImVec4 bgLight = ImVec4(0.12f, 0.12f, 0.15f, 1.0f);
+    ImVec4 accent = ImVec4(0.40f, 0.70f, 1.0f, 1.0f);
+    ImVec4 accentDim = ImVec4(0.25f, 0.50f, 0.80f, 0.7f);
+    ImVec4 text = ImVec4(0.92f, 0.92f, 0.94f, 1.0f);
+    ImVec4 textDim = ImVec4(0.50f, 0.50f, 0.55f, 1.0f);
+    ImVec4 green = ImVec4(0.35f, 0.90f, 0.50f, 1.0f);
+    ImVec4 yellow = ImVec4(1.0f, 0.85f, 0.35f, 1.0f);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, bg);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.2f, 0.2f, 0.25f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_Text, text);
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, textDim);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, bgLight);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, accentDim);
+    ImGui::PushStyleColor(ImGuiCol_Header, bgLight);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, accentDim);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, accent);
+    ImGui::PushStyleColor(ImGuiCol_Button, bgLight);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accentDim);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, accent);
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(0.55f, 0.80f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, accent);
+    ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_TabHovered, accentDim);
+    ImGui::PushStyleColor(ImGuiCol_TabActive, accent);
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.25f, 0.25f, 0.30f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, bgLight);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, accent);
+    const int COLOR_COUNT = 23;
+
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(currentWidth, ImGui::GetIO().DisplaySize.y));
+
+    ImGui::Begin("##Panel", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
+    // =========================================================================
+    // HEADER WITH TOGGLE
+    // =========================================================================
+    {
+        // Toggle button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        if (ImGui::Button(panelOpen ? "<<" : ">>", ImVec2(28, 28)))
         {
+            panelOpen = !panelOpen;
+        }
+        ImGui::PopStyleColor();
+
+        if (panelOpen && ease > 0.5f)
+        {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, accent);
+            ImGui::Text("XeRender");
+            ImGui::PopStyleColor();
+
+            ImGui::SameLine(currentWidth - 70);
+            float fps = (isBenchmarkActive || isTestModeActive) && gpuSyncedFrameTimeMs > 0
+                            ? static_cast<float>(1000.0 / gpuSyncedFrameTimeMs)
+                            : ImGui::GetIO().Framerate;
+            ImGui::PushStyleColor(ImGuiCol_Text, (isBenchmarkActive || isTestModeActive) ? green : textDim);
+            ImGui::Text("%.0f", fps);
+            ImGui::PopStyleColor();
+        }
+    }
+
+    // Only render content when panel is mostly open
+    if (ease > 0.3f)
+    {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // =====================================================================
+        // SCENE SECTION
+        // =====================================================================
+        if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Checkbox("Rotate", &rotationEnabled);
+            ImGui::SameLine(120);
+            ImGui::Checkbox("Wireframe", &wireframeEnabled);
+
             ImGui::Spacing();
 
-            ImGui::Text("App avg %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-            ImGui::Spacing();
-
-            ImGui::Separator();
-
-            ImGui::Checkbox("Rotate Object", &rotationEnabled);
-            ImGui::Checkbox("Wireframe Mode", &wireframeEnabled);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            // === ADD THIS SLIDER ===
-            ImGui::Text("Water Settings");
-            ImGui::SliderFloat("Water Speed", &waterSpeed, 0.0f, 5.0f);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            // =======================
-
-            ImGui::Checkbox("Apply Normal Map", (bool *)&currentToggleInfo.applyNormalMap);
-            ImGui::Checkbox("Apply Metalness Map", (bool *)&currentToggleInfo.applyMetalnessMap);
-            ImGui::Checkbox("Apply Specular Map", (bool *)&currentToggleInfo.applySpecularMap);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::Checkbox("View Normal Only", (bool *)&currentToggleInfo.viewNormalOnly);
-            ImGui::Checkbox("View Metal Only", (bool *)&currentToggleInfo.viewMetalnessOnly);
-            ImGui::Checkbox("View spec Only", (bool *)&currentToggleInfo.viewSpecularOnly);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::TextUnformatted("Background Setting");
-            ImGui::Spacing();
-
-            ImGui::Checkbox("Solid Background", &useSolidBackground);
-
-            if (useSolidBackground)
+            if (ImGui::TreeNode("Materials"))
             {
-                ImGui::ColorPicker3("color", (float *)&backgroundColor);
+                ImGui::Checkbox("Normal", (bool *)&currentToggleInfo.applyNormalMap);
+                ImGui::SameLine(100);
+                ImGui::Checkbox("Metal", (bool *)&currentToggleInfo.applyMetalnessMap);
+                ImGui::Checkbox("Specular", (bool *)&currentToggleInfo.applySpecularMap);
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("Debug Views");
+                ImGui::Checkbox("Normal##V", (bool *)&currentToggleInfo.viewNormalOnly);
+                ImGui::SameLine(100);
+                ImGui::Checkbox("Metal##V", (bool *)&currentToggleInfo.viewMetalnessOnly);
+                ImGui::Checkbox("Spec##V", (bool *)&currentToggleInfo.viewSpecularOnly);
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Background"))
+            {
+                ImGui::Checkbox("Solid Color", &useSolidBackground);
+                if (useSolidBackground)
+                {
+                    ImGui::ColorEdit3("##BgCol", (float *)&backgroundColor, ImGuiColorEditFlags_NoInputs);
+                }
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Camera"))
+            {
+                glm::vec3 camPos = camera.getPosition();
+                ImGui::TextDisabled("%.1f, %.1f, %.1f", camPos.x, camPos.y, camPos.z);
+                ImGui::SliderFloat("Sens", &camera.mouseSensitivity, 0.025f, 1.5f, "%.2f");
+                ImGui::SliderFloat("Speed", &camera.movementSpeed, 0.001f, 0.050f, "%.3f");
+                if (ImGui::Button("Screenshot", ImVec2(-1, 0)))
+                    captureScreenshot = true;
+                ImGui::TreePop();
+            }
+        }
+
+        // =====================================================================
+        // LIGHTING SECTION
+        // =====================================================================
+        if (ImGui::CollapsingHeader("Lighting"))
+        {
+            if (ImGui::TreeNode("Sun"))
+            {
+                ImGui::ColorEdit3("##SunCol", (float *)&light0Color, ImGuiColorEditFlags_NoInputs);
+                ImGui::SameLine();
+                ImGui::SliderFloat("##SunInt", &light0Intensity, 0.0f, 20.0f, "%.1f");
+                ImGui::SliderFloat("X##Sun", &light0Position.x, -500.0f, 500.0f);
+                ImGui::SliderFloat("Y##Sun", &light0Position.y, 0.0f, 1000.0f);
+                ImGui::SliderFloat("Z##Sun", &light0Position.z, -500.0f, 500.0f);
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Secondary"))
+            {
+                ImGui::ColorEdit3("##L2Col", (float *)&light1Color, ImGuiColorEditFlags_NoInputs);
+                ImGui::SameLine();
+                ImGui::SliderFloat("##L2Int", &light1Intensity, 0.0f, 20.0f, "%.1f");
+                ImGui::SliderFloat3("Pos##L2", (float *)&light1Position[0], -100.0f, 100.0f);
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Ambient"))
+            {
+                ImGui::ColorEdit3("##AmbCol", (float *)&ambientColor, ImGuiColorEditFlags_NoInputs);
+                ImGui::SameLine();
+                ImGui::SliderFloat("##AmbInt", &ambientIntensity, 0.0f, 20.0f, "%.1f");
+                ImGui::TreePop();
+            }
+
+            ImGui::Checkbox("Rim Light", (bool *)&currentToggleInfo.RimLight);
+        }
+
+        // =====================================================================
+        // WATER SECTION
+        // =====================================================================
+        if (ImGui::CollapsingHeader("Water", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            // Rendering mode at top
+            ImGui::Combo("Mode", &currentRenderingMode, renderingModes, IM_ARRAYSIZE(renderingModes));
+
+            ImGui::Spacing();
+
+            if (ImGui::TreeNode("Surface"))
+            {
+                ImGui::ColorEdit3("Color##Surf", (float *)&waterBaseColor, ImGuiColorEditFlags_NoInputs);
+                ImGui::SliderFloat("Opacity", &waterSurfaceOpacity, 0.0f, 1.0f);
+                ImGui::SliderFloat("Speed", &waterSpeed, 0.0f, 5.0f);
+                ImGui::SliderFloat("Distort", &waterDistortionStrength, 0.0f, 0.1f);
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Underwater"))
+            {
+                ImGui::ColorEdit3("Shallow", (float *)&underwaterShallowColor, ImGuiColorEditFlags_NoInputs);
+                ImGui::SameLine();
+                ImGui::ColorEdit3("Deep", (float *)&underwaterDeepColor, ImGuiColorEditFlags_NoInputs);
+                ImGui::SliderFloat("God Rays", &underwaterGodRayIntensity, 0.0f, 3.0f);
+                ImGui::SliderFloat("Caustics", &oceanBottomCausticIntensity, 0.0f, 5.0f);
+                ImGui::SliderFloat("Fog", &underwaterFogDensity, 0.0f, 0.2f);
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Particles"))
+            {
+                ImGui::SliderFloat("Amount", &marineSnowIntensity, 0.0f, 2.0f);
+                ImGui::SliderFloat("Size", &marineSnowSize, 0.2f, 3.0f);
+                ImGui::SliderFloat("Drift", &marineSnowSpeed, 0.0f, 3.0f);
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Effects"))
+            {
+                ImGui::SliderFloat("Chromatic", &chromaticAberrationStrength, 0.0f, 0.5f);
+                ImGui::TextDisabled("God Ray Tuning");
+                ImGui::SliderFloat("Exposure", &godExposure, 0.0f, 3.0f);
+                ImGui::SliderFloat("Decay", &godDecay, 0.7f, 1.0f);
+                ImGui::SliderFloat("Density", &godDensity, 0.1f, 2.0f);
+                ImGui::SliderFloat("Scale", &godSampleScale, 0.25f, 2.0f);
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Debug"))
+            {
+                ImGui::Checkbox("Rays", &showDebugRays);
+                ImGui::SameLine();
+                ImGui::Checkbox("Snow", &showMarineSnowDebug);
+                ImGui::SameLine();
+                ImGui::Checkbox("CA", &showChromaticDebug);
+                if (showDebugRays || showMarineSnowDebug || showChromaticDebug)
+                {
+                    ImGui::TextColored(yellow, "Debug ON");
+                }
+                ImGui::TreePop();
+            }
+        }
+
+        // =====================================================================
+        // BENCHMARK SECTION
+        // =====================================================================
+        if (ImGui::CollapsingHeader("Benchmark"))
+        {
+            static bool runningBenchmark = false;
+            static float benchmarkTime = 0.0f;
+            static float benchmarkFps[3] = {0.0f, 0.0f, 0.0f};
+            static float benchmarkFpsSum[3] = {0.0f, 0.0f, 0.0f};
+            static int benchmarkFrameCount[3] = {0, 0, 0};
+            static int savedRenderingMode = 0;
+            static bool firstBenchmarkFrame = false;
+            static glm::vec3 savedCameraPos;
+            static float savedCameraYaw, savedCameraPitch;
+
+            if (!runningBenchmark)
+            {
+                if (ImGui::Button("Run Benchmark", ImVec2(-1, 28)))
+                {
+                    runningBenchmark = true;
+                    isBenchmarkActive = true;
+                    firstBenchmarkFrame = true;
+                    benchmarkTime = 0.0f;
+                    gpuSyncedFrameTimeMs = 0.0;
+                    savedRenderingMode = currentRenderingMode;
+                    savedCameraPos = camera.position;
+                    savedCameraYaw = camera.yaw;
+                    savedCameraPitch = camera.pitch;
+                    camera.position = glm::vec3(0.0f, -25.0f, 30.0f);
+                    camera.setYaw(-90.0f);
+                    camera.setPitch(15.0f);
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        benchmarkFps[i] = 0.0f;
+                        benchmarkFpsSum[i] = 0.0f;
+                        benchmarkFrameCount[i] = 0;
+                    }
+                }
             }
             else
             {
-                ImGui::TextWrapped("Solid background disabled — clearing to black so skybox will be visible.");
+                if (firstBenchmarkFrame)
+                {
+                    firstBenchmarkFrame = false;
+                    ImGui::TextColored(yellow, "Warming up...");
+                }
+                else if (gpuSyncedFrameTimeMs > 0.1)
+                {
+                    float gpuSyncedDeltaTime = static_cast<float>(gpuSyncedFrameTimeMs / 1000.0);
+                    benchmarkTime += gpuSyncedDeltaTime;
+                    float gpuSyncedFps = static_cast<float>(1000.0 / gpuSyncedFrameTimeMs);
+
+                    ImGui::ProgressBar(benchmarkTime / 6.0f, ImVec2(-1, 0));
+
+                    float warmupTime = 0.5f;
+                    float testDuration = 2.0f;
+
+                    if (benchmarkTime < testDuration)
+                    {
+                        if (currentRenderingMode != 0)
+                            currentRenderingMode = 0;
+                        if (benchmarkTime > warmupTime)
+                        {
+                            benchmarkFpsSum[0] += gpuSyncedFps;
+                            benchmarkFrameCount[0]++;
+                        }
+                    }
+                    else if (benchmarkTime < testDuration * 2)
+                    {
+                        if (currentRenderingMode != 1)
+                            currentRenderingMode = 1;
+                        if (benchmarkTime > testDuration + warmupTime)
+                        {
+                            benchmarkFpsSum[1] += gpuSyncedFps;
+                            benchmarkFrameCount[1]++;
+                        }
+                    }
+                    else if (benchmarkTime < testDuration * 3)
+                    {
+                        if (currentRenderingMode != 2)
+                            currentRenderingMode = 2;
+                        if (benchmarkTime > testDuration * 2 + warmupTime)
+                        {
+                            benchmarkFpsSum[2] += gpuSyncedFps;
+                            benchmarkFrameCount[2]++;
+                        }
+                    }
+                    else
+                    {
+                        for (int i = 0; i < 3; ++i)
+                        {
+                            if (benchmarkFrameCount[i] > 0)
+                                benchmarkFps[i] = benchmarkFpsSum[i] / benchmarkFrameCount[i];
+                        }
+                        runningBenchmark = false;
+                        isBenchmarkActive = false;
+                        currentRenderingMode = savedRenderingMode;
+                        camera.position = savedCameraPos;
+                        camera.setYaw(savedCameraYaw);
+                        camera.setPitch(savedCameraPitch);
+                    }
+                }
             }
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Lighting"))
-        {
-            // First Light Settings
-            ImGui::Text("First Light Settings:");
-            ImGui::ColorEdit3("Color1", (float *)&light0Color);
-            ImGui::SliderFloat("Intensity1", &light0Intensity, 0.0f, 20.0f);
-            ImGui::SliderFloat3("Position1", (float *)&light0Position[0], -100.0f, 100.0f);
-
-            ImGui::Separator();
-
-            // Second Light Settings
-            ImGui::Text("Second Light Settings:");
-            ImGui::ColorEdit3("Color2", (float *)&light1Color);
-            ImGui::SliderFloat("Intensity2", &light1Intensity, 0.0f, 20.0f);
-            ImGui::SliderFloat3("Position2", (float *)&light1Position[0], -100.0f, 100.0f);
-
-            ImGui::Separator();
-
-            // Ambient Light Settings
-            ImGui::Text("Ambient Light Settings:");
-            ImGui::ColorEdit3("Ambient Color", (float *)&ambientColor);
-            ImGui::SliderFloat("Ambient Intensity", &ambientIntensity, 0.0f, 20.0f);
-
-            ImGui::Separator();
-
-            ImGui::Checkbox("View RimLight", (bool *)&currentToggleInfo.RimLight);
-
-            ImGui::EndTabItem();
-        }
-
-        // Water Settings Tab
-        if (ImGui::BeginTabItem("Water"))
-        {
-            ImGui::Spacing();
-            ImGui::Text("Water Appearance");
-            ImGui::Spacing();
-
-            // Water base color
-            ImGui::ColorEdit3("Water Base Color", (float *)&waterBaseColor);
-
-            // Water light color
-            ImGui::ColorEdit3("Water Light Color", (float *)&waterLightColor);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::Text("Water Lighting");
-            ImGui::SliderFloat("Water Ambient", &waterAmbient, 0.0f, 1.0f);
-            ImGui::SliderFloat("Water Shininess", &waterShininess, 1.0f, 1024.0f);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::Text("Water Wave & Distortion");
-            ImGui::SliderFloat("Water Speed##wave", &waterSpeed, 0.0f, 5.0f);
-            ImGui::SliderFloat("Distortion Strength", &waterDistortionStrength, 0.0f, 0.2f);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::Text("Water Effects");
-            ImGui::SliderFloat("Caustic Intensity", &waterCausticIntensity, 0.0f, 5.0f);
-            ImGui::SliderFloat("Fresnel R0", &waterFresnelR0, 0.0f, 0.1f);
-
-            ImGui::EndTabItem();
-        }
-
-        // New tab for controls and info
-        if (ImGui::BeginTabItem("Controls & Info"))
-        {
-            ImGui::Spacing();
-            ImGui::Text("How to Move:");
-            ImGui::BulletText("Hold LMB");
-            ImGui::BulletText("W A S D to move");
-            ImGui::BulletText("Q to go up");
-            ImGui::BulletText("E to go down");
-            ImGui::BulletText("Mouse Look around");
-            ImGui::BulletText("Scroll-> movement Speed");
-            ImGui::BulletText("P to SceenShot");
-            ImGui::BulletText("R to Rotate");
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::Text("Mouse Settings:");
-            ImGui::SliderFloat("Mouse Sens", &camera.mouseSensitivity, 0.025f, 1.5f);
-            ImGui::SliderFloat("Move Speed", &camera.movementSpeed, 0.001f, 0.050f);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::Text("Camera Info:");
-            glm::vec3 camPos = camera.getPosition();
-            ImGui::Text("Position: (%.2f, %.2f, %.2f)", camPos.x, camPos.y, camPos.z);
-            ImGui::Text("Rotation: Yaw = %.2f, Pitch = %.2f", camera.yaw, camera.pitch);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            if (ImGui::Button("Capture Screenshot"))
+            // Results
+            if (!runningBenchmark && (benchmarkFps[0] > 0 || benchmarkFps[1] > 0 || benchmarkFps[2] > 0))
             {
-                captureScreenshot = true;
-            }
+                ImGui::TextColored(green, "BL: %.0f", benchmarkFps[0]);
+                ImGui::SameLine(90);
+                ImGui::TextColored(yellow, "PB: %.0f", benchmarkFps[1]);
+                ImGui::SameLine(170);
+                ImGui::TextColored(accent, "OPT: %.0f", benchmarkFps[2]);
 
-            ImGui::EndTabItem();
+                if (ImGui::Button("Clear##Bench", ImVec2(-1, 0)))
+                {
+                    for (int i = 0; i < 3; ++i)
+                        benchmarkFps[i] = 0.0f;
+                }
+            }
         }
 
-        ImGui::EndTabBar();
-    }
+        // =====================================================================
+        // TESTING SECTION
+        // =====================================================================
+        if (ImGui::CollapsingHeader("Testing"))
+        {
+            renderTestingUI();
+        }
 
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(9);
+        // =====================================================================
+        // HELP (Collapsed by default)
+        // =====================================================================
+        if (ImGui::CollapsingHeader("Controls"))
+        {
+            ImGui::TextDisabled("LMB + WASD = Move");
+            ImGui::TextDisabled("Q/E = Up/Down");
+            ImGui::TextDisabled("Scroll = Speed");
+            ImGui::TextDisabled("P = Screenshot");
+            ImGui::TextDisabled("R = Rotate");
+            ImGui::TextDisabled("` = Toggle Panel");
+        }
+    } // end if (ease > 0.3f)
 
+    ImGui::PopStyleColor(COLOR_COUNT);
     ImGui::End();
-
     ImGui::Render();
 
     VkRenderPassBeginInfo rpInfo{};
@@ -1402,6 +1913,12 @@ void VulkanBase::recordCommandBuffer(CommandBuffer &commandBuffer, uint32_t imag
     commandBuffer.beginRenderPass(rpInfo, VK_SUBPASS_CONTENTS_INLINE);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer.getVkCommandBuffer(), 0);
     commandBuffer.endRenderPass();
+
+    // === END GPU TIMER (before ending command buffer) ===
+    if (waterTestingSystem && isTestModeActive)
+    {
+        waterTestingSystem->writeTimestampEnd(commandBuffer.getVkCommandBuffer());
+    }
 
     updateToggleInfo(currentFrame, currentToggleInfo);
 
@@ -1431,6 +1948,9 @@ void VulkanBase::endRenderPass(const CommandBuffer &buffer)
 
 void VulkanBase::recreateSwapChain()
 {
+    // Set flag immediately to prevent any command buffer recording
+    isRecreatingSwapChain = true;
+
     int width = 0, height = 0;
     glfwGetFramebufferSize(window, &width, &height);
     while (width == 0 || height == 0)
@@ -1440,6 +1960,85 @@ void VulkanBase::recreateSwapChain()
     }
 
     vkDeviceWaitIdle(device);
+
+    // ===== MARK WATER MESH AS INVALID DURING RECREATION =====
+    if (waterMesh)
+    {
+        waterMesh->setValid(false);
+    }
+
+    // ===== CLEANUP SCENE/OFFSCREEN RESOURCES BEFORE SWAP CHAIN RECREATION =====
+
+    // Cleanup scene color texture resources
+    if (sceneColorSampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(device, sceneColorSampler, nullptr);
+        sceneColorSampler = VK_NULL_HANDLE;
+    }
+    if (sceneColorImageView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(device, sceneColorImageView, nullptr);
+        sceneColorImageView = VK_NULL_HANDLE;
+    }
+    if (sceneColorImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(device, sceneColorImage, nullptr);
+        vkFreeMemory(device, sceneColorImageMemory, nullptr);
+        sceneColorImage = VK_NULL_HANDLE;
+        sceneColorImageMemory = VK_NULL_HANDLE;
+    }
+
+    if (sceneReflectionFramebuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyFramebuffer(device, sceneReflectionFramebuffer, nullptr);
+        sceneReflectionFramebuffer = VK_NULL_HANDLE;
+    }
+    if (sceneReflectionRenderPass != VK_NULL_HANDLE)
+    {
+        vkDestroyRenderPass(device, sceneReflectionRenderPass, nullptr);
+        sceneReflectionRenderPass = VK_NULL_HANDLE;
+    }
+    if (sceneReflectionImageView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(device, sceneReflectionImageView, nullptr);
+        sceneReflectionImageView = VK_NULL_HANDLE;
+    }
+    if (sceneReflectionImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(device, sceneReflectionImage, nullptr);
+        sceneReflectionImage = VK_NULL_HANDLE;
+    }
+    if (sceneReflectionImageMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(device, sceneReflectionImageMemory, nullptr);
+        sceneReflectionImageMemory = VK_NULL_HANDLE;
+    }
+
+    if (sceneRefractionFramebuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyFramebuffer(device, sceneRefractionFramebuffer, nullptr);
+        sceneRefractionFramebuffer = VK_NULL_HANDLE;
+    }
+    if (sceneRefractionRenderPass != VK_NULL_HANDLE)
+    {
+        vkDestroyRenderPass(device, sceneRefractionRenderPass, nullptr);
+        sceneRefractionRenderPass = VK_NULL_HANDLE;
+    }
+    if (sceneRefractionImageView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(device, sceneRefractionImageView, nullptr);
+        sceneRefractionImageView = VK_NULL_HANDLE;
+    }
+    if (sceneRefractionImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(device, sceneRefractionImage, nullptr);
+        sceneRefractionImage = VK_NULL_HANDLE;
+    }
+    if (sceneRefractionImageMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(device, sceneRefractionImageMemory, nullptr);
+        sceneRefractionImageMemory = VK_NULL_HANDLE;
+    }
 
     swapChainManager->cleanupSwapChain();
 
@@ -1454,13 +2053,24 @@ void VulkanBase::recreateSwapChain()
     createDepthResources();
     createFrameBuffers();
 
+    // ===== RECREATE SCENE/OFFSCREEN RESOURCES AFTER SWAP CHAIN =====
+    createSceneColorTexture();
+    createSceneRenderPassAndFramebuffer();
+    createSceneReflectionTexture();
+    createSceneReflectionRenderPassAndFramebuffer();
+    createSceneRefractionRenderPassAndFramebuffer();
+
+    // Update water descriptors to point at the newly-created image views/samplers
+    // so descriptor sets don't reference destroyed handles.
+    updateWaterDescriptors();
+
     createGraphicsPipeline();
 
     // IMPORTANT: Recreate skybox and water pipelines with the new render pass
     if (skyboxPipeline)
     {
-   //    std::cout << "[DEBUG] recreateSwapChain: Destroying and recreating skybox pipeline\n";
-   //    std::cout << "[DEBUG] recreateSwapChain: Using renderPass: " << renderPass << "\n";
+        //    std::cout << "[DEBUG] recreateSwapChain: Destroying and recreating skybox pipeline\n";
+        //    std::cout << "[DEBUG] recreateSwapChain: Using renderPass: " << renderPass << "\n";
         skyboxPipeline->destroy(device);
         skyboxPipeline->create(
             device,
@@ -1469,13 +2079,13 @@ void VulkanBase::recreateSwapChain()
             descriptorSetLayout,
             skyboxDescriptorSetLayout,
             msaaSamples);
-  //      std::cout << "[DEBUG] recreateSwapChain: Skybox pipeline recreated\n";
+        //      std::cout << "[DEBUG] recreateSwapChain: Skybox pipeline recreated\n";
     }
 
     if (waterPipeline)
     {
-    //    std::cout << "[DEBUG] recreateSwapChain: Destroying and recreating water pipeline\n";
-    //    std::cout << "[DEBUG] recreateSwapChain: Using renderPass: " << renderPass << "\n";
+        //    std::cout << "[DEBUG] recreateSwapChain: Destroying and recreating water pipeline\n";
+        //    std::cout << "[DEBUG] recreateSwapChain: Using renderPass: " << renderPass << "\n";
         waterPipeline->destroy(device);
         waterPipeline->create(
             device,
@@ -1483,11 +2093,55 @@ void VulkanBase::recreateSwapChain()
             renderPass,
             descriptorSetLayout,
             waterDescriptorSetLayout,
-            msaaSamples);
-    //    std::cout << "[DEBUG] recreateSwapChain: Water pipeline recreated\n";
+            msaaSamples,
+            false);
+    }
+    if (underwaterWaterPipeline)
+    {
+        underwaterWaterPipeline->destroy(device);
+        underwaterWaterPipeline->create(
+            device,
+            swapChainManager->getSwapChainExtent(),
+            renderPass,
+            descriptorSetLayout,
+            waterDescriptorSetLayout,
+            msaaSamples,
+            true);
+        //    std::cout << "[DEBUG] recreateSwapChain: Water pipeline recreated\n";
     }
 
+    // Recreate sunrays pipeline with new swap chain extent
+    if (sunraysPipeline)
+    {
+        sunraysPipeline->destroy(device);
+        sunraysPipeline->create(
+            device,
+            swapChainManager->getSwapChainExtent(),
+            renderPass,
+            descriptorSetLayout,
+            waterDescriptorSetLayout,
+            msaaSamples,
+            true); // isSunraysPipeline = true
+    }
+
+    // Recreate ImGui framebuffers with new swapchain images
+    for (auto fb : imguiFramebuffers)
+    {
+        vkDestroyFramebuffer(device, fb, nullptr);
+    }
+    imguiFramebuffers.clear();
+    createImGuiFramebuffers();
+
     createCommandBuffers();
+
+    // ===== MARK WATER MESH AS VALID AFTER RECREATION =====
+    if (waterMesh)
+    {
+        waterMesh->setValid(true);
+    }
+
+    // Clear the flag - swap chain recreation is complete
+    isRecreatingSwapChain = false;
 }
 
 bool VulkanBase::checkValidationLayerSupport()
@@ -2152,25 +2806,21 @@ void VulkanBase::createGraphicsPipeline()
     {
         throw std::runtime_error("createGraphicsPipeline: renderPass is imguiRenderPass! This is a critical bug.");
     }
-   // std::cout << "[DEBUG] createGraphicsPipeline: renderPass = " << renderPass << " (ImGui = " << imguiRenderPass << ")\n";
 
     shader3D = std::make_unique<Shader3D>(device, "shaders/3d_shader.vert.spv", "shaders/3d_shader.frag.spv");
 
     auto bindingDescription = Vertex::getBindingDescription();
     auto attributeDescriptionsArray = Vertex::getAttributeDescriptions();
-
-    // Convert std::array to std::vector
     std::vector<VkVertexInputAttributeDescription> attributeDescriptions(
         attributeDescriptionsArray.begin(), attributeDescriptionsArray.end());
 
-    // If wireframe mode is enabled, filter out unused attributes
     if (wireframeEnabled)
     {
         attributeDescriptions.erase(
             std::remove_if(attributeDescriptions.begin(), attributeDescriptions.end(),
                            [](const VkVertexInputAttributeDescription &desc)
                            {
-                               return desc.location >= 3; // Assuming locations 3 and above are not used in wireframe mode
+                               return desc.location >= 3;
                            }),
             attributeDescriptions.end());
     }
@@ -2241,36 +2891,32 @@ void VulkanBase::createGraphicsPipeline()
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
+    std::array<VkDescriptorSetLayout, 2> setLayouts = {descriptorSetLayout, waterDescriptorSetLayout};
+
+    // --- CRITICAL FIX START ---
+    // Define the Push Constant Range for the MAIN pipeline (Ocean Floor)
+    // This must match the WaterPipeline range (96 bytes, Vertex + Fragment)
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushRange.offset = 0;
+    pushRange.size = 96;
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
+    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
+
+    // Enable the push constant range
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+    // --- CRITICAL FIX END ---
 
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
     {
         throw std::runtime_error("failed to create pipeline layout!");
     }
 
-    if (pipelineLayout == VK_NULL_HANDLE)
-    {
-        throw std::runtime_error("pipeline layout is null!");
-    }
-
     auto shaderStages = shader3D->getShaderStages();
-
-    // DEBUG: Verify renderPass is not null and is the main one
-    // std::cout << "[DEBUG] createGraphicsPipeline: Using renderPass handle: " << renderPass << "\n";
-    // std::cout << "[DEBUG] createGraphicsPipeline: imguiRenderPass handle: " << imguiRenderPass << "\n";
-
-    if (renderPass == VK_NULL_HANDLE)
-    {
-        throw std::runtime_error("createGraphicsPipeline: renderPass is NULL! This will cause validation errors.");
-    }
-    if (renderPass == imguiRenderPass)
-    {
-        throw std::runtime_error("createGraphicsPipeline: renderPass is the ImGui render pass! Should use main render pass.");
-    }
 
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -2288,16 +2934,12 @@ void VulkanBase::createGraphicsPipeline()
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
-   // std::cout << "[DEBUG] createGraphicsPipeline: About to create pipeline with renderPass: " << renderPass << "\n";
-   // std::cout << "[DEBUG] createGraphicsPipeline: ImGui renderPass is: " << imguiRenderPass << "\n";
-   // std::cout << "[DEBUG] createGraphicsPipeline: MSAA samples: " << msaaSamples << "\n";
-
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS)
     {
         throw std::runtime_error("failed to create graphics pipeline!");
     }
 
-    std::cout << "[DEBUG] createGraphicsPipeline: Created graphics pipeline: " << graphicsPipeline << "\n";
+    std::cout << "[DEBUG] createGraphicsPipeline: Created graphics pipeline with Push Constants (Size 80)\n";
 }
 
 void VulkanBase::updatePipelineIfNeeded()
@@ -2305,9 +2947,9 @@ void VulkanBase::updatePipelineIfNeeded()
     if (currentWireframeState != wireframeEnabled)
     {
         vkDeviceWaitIdle(device);
-       // std::cout << "[DEBUG] updatePipelineIfNeeded: Destroying graphics pipeline: " << graphicsPipeline << "\n";
-       // std::cout << "[DEBUG] updatePipelineIfNeeded: Current renderPass: " << renderPass << "\n";
-       // std::cout << "[DEBUG] updatePipelineIfNeeded: ImGui renderPass: " << imguiRenderPass << "\n";
+        // std::cout << "[DEBUG] updatePipelineIfNeeded: Destroying graphics pipeline: " << graphicsPipeline << "\n";
+        // std::cout << "[DEBUG] updatePipelineIfNeeded: Current renderPass: " << renderPass << "\n";
+        // std::cout << "[DEBUG] updatePipelineIfNeeded: ImGui renderPass: " << imguiRenderPass << "\n";
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         createGraphicsPipeline();
         // std::cout << "[DEBUG] updatePipelineIfNeeded: Recreated graphics pipeline: " << graphicsPipeline << "\n";
@@ -2871,8 +3513,31 @@ void VulkanBase::createTextureSampler()
 
 void VulkanBase::drawFrame()
 {
-    // Wait for the frame’s fence to ensure the GPU has finished
+    // SAFETY: Skip entire frame if swap chain recreation is in progress or framebuffer was resized
+    if (isRecreatingSwapChain || framebufferResized)
+    {
+        // Trigger recreation now and return
+        if (framebufferResized)
+        {
+            framebufferResized = false;
+            recreateSwapChain();
+        }
+        return;
+    }
+
+    // Wait for the frame's fence to ensure the GPU has finished
     vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
+    // Double-check after fence wait - resize callback could have fired during wait
+    if (isRecreatingSwapChain || framebufferResized)
+    {
+        if (framebufferResized)
+        {
+            framebufferResized = false;
+            recreateSwapChain();
+        }
+        return;
+    }
 
     updatePipelineIfNeeded();
 
@@ -2893,6 +3558,12 @@ void VulkanBase::drawFrame()
     else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
     {
         throw std::runtime_error("failed to acquire swap chain image!");
+    }
+
+    // Triple-check before recording - one more safety check
+    if (isRecreatingSwapChain)
+    {
+        return;
     }
 
     // Reset the fence so we can use it for the next submission
@@ -2944,6 +3615,15 @@ void VulkanBase::drawFrame()
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized)
     {
+        // Set recreation flag FIRST before anything else
+        isRecreatingSwapChain = true;
+
+        // Disable water mesh immediately when resize is detected
+        if (waterMesh)
+        {
+            waterMesh->setValid(false);
+        }
+
         framebufferResized = false;
         recreateSwapChain();
     }
@@ -2970,7 +3650,10 @@ void VulkanBase::updateUniformBuffer(uint32_t currentImage)
     ubo.proj = glm::perspective(glm::radians(camera.zoom), swapChainManager->getSwapChainExtent().width / (float)swapChainManager->getSwapChainExtent().height, 0.1f, 1000.0f);
     ubo.proj[1][1] *= -1; // Flip Y for Vulkan
     ubo.model = glm::mat4(1.0f);
+    ubo.lightPos = glm::vec4(light0Position, 1.0f);
+    // ==========================================
 
+    ubo.viewPos = glm::vec4(camera.getPosition(), 1.0f);
     // 2. REFLECTION CAMERA (Reflection Pass)
     UBO uboRefl{};
     uboRefl.proj = ubo.proj;
@@ -3068,9 +3751,9 @@ void VulkanBase::createSkyboxDescriptorSet()
 
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     // std::cout << "=== DEBUG: Skybox Descriptor Updated ===\n";
-   // std::cout << "DescriptorSet = " << skyboxDescriptorSet << "\n";
-   // std::cout << "View in descriptor = " << skyboxImageView
-   //           << ", Sampler = " << skyboxSampler << "\n";
+    // std::cout << "DescriptorSet = " << skyboxDescriptorSet << "\n";
+    // std::cout << "View in descriptor = " << skyboxImageView
+    //           << ", Sampler = " << skyboxSampler << "\n";
 }
 
 void VulkanBase::createSkyboxDescriptorPool()
@@ -3091,100 +3774,96 @@ void VulkanBase::createSkyboxDescriptorPool()
 
 void VulkanBase::createWaterResources()
 {
-    // Create simple 1x1 placeholder textures for water
-    // This avoids file I/O issues and ensures valid texture data
+    // -----------------------------------------------------------------
+    // REPLACE PLACEHOLDERS WITH REAL TEXTURE LOADING
+    // -----------------------------------------------------------------
 
-    // Placeholder data
-    uint8_t whitePixel[] = {255, 255, 255, 255};  // RGBA white
-    uint8_t normalPixel[] = {128, 255, 128, 255}; // Neutral normal (straight up)
-
-    // Helper lambda to create a simple 1x1 texture
-    auto createPlaceholderTexture = [this](VkImage &image, VkDeviceMemory &memory, const uint8_t *pixelData)
+    // 1. Load Normal Map
+    // This gives the water its wave shape.
+    // Ensure "textures/water_normal.png" exists.
+    try
     {
-        VkDeviceSize pixelSize = 4;
+        loadTexture("textures/water_normal.jpg", waterNormalImage, waterNormalImageMemory);
+        // loadTexture updates 'mipLevels', use it to create the view
+        waterNormalImageView = createImageView(waterNormalImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels, false);
+        std::cout << "[Water] Loaded water_normal.jpg\n";
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[Water] Error loading water_normal.jpg: " << e.what() << "\n";
+        // Fallback logic could go here, but for now we crash or handle via existing exception
+        throw;
+    }
 
-        // Create staging buffer
-        auto [stagingBuf, stagingMem] = VkUtils::CreateBuffer(
-            device, physicalDevice, pixelSize,
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    // 2. Load DUDV Map (Distortion)
+    // This creates the wobbly distortion effect and refraction.
+    // Ensure "textures/water_dudv.png" exists.
+    try
+    {
+        loadTexture("textures/water_dudv.jpg", waterDudvImage, waterDudvImageMemory);
+        waterDudvImageView = createImageView(waterDudvImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels, false);
+        std::cout << "[Water] Loaded water_dudv.jpg\n";
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[Water] Error loading water_dudv.jpg: " << e.what() << "\n";
+        throw;
+    }
 
-        // Upload pixel data to staging buffer
-        void *data = nullptr;
-        vkMapMemory(device, stagingMem, 0, pixelSize, 0, &data);
-        memcpy(data, pixelData, pixelSize);
-        vkUnmapMemory(device, stagingMem);
-
-        // Create GPU image
-        createImage(1, 1, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, image, memory);
-
-        // Transition layout and copy data
-        transitionImageLayout(image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-        copyBufferToImage(stagingBuf, image, 1, 1);
-        transitionImageLayout(image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
-
-        // Cleanup staging buffer
-        vkDestroyBuffer(device, stagingBuf, nullptr);
-        vkFreeMemory(device, stagingMem, nullptr);
-    };
-
-    // Create all three placeholder textures
-    createPlaceholderTexture(waterNormalImage, waterNormalImageMemory, normalPixel);
-    waterNormalImageView = createImageView(waterNormalImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 1, false);
-
-    createPlaceholderTexture(waterDudvImage, waterDudvImageMemory, whitePixel);
-    waterDudvImageView = createImageView(waterDudvImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 1, false);
-
-    createPlaceholderTexture(waterCausticImage, waterCausticImageMemory, whitePixel);
-    waterCausticImageView = createImageView(waterCausticImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 1, false);
-
-    //std::cout << "[Water] Placeholder textures created successfully\n";
+    // 3. Load Caustics Map
+    // This creates the light patterns on the ocean floor.
+    // Ensure "textures/water_caustics.png" exists.
+    try
+    {
+        loadTexture("textures/water_caustic.jpg", waterCausticImage, waterCausticImageMemory);
+        waterCausticImageView = createImageView(waterCausticImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels, false);
+        std::cout << "[Water] Loaded water_caustic.jpg\n";
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[Water] Error loading water_caustic.jpg: " << e.what() << "\n";
+        throw;
+    }
 }
 
 void VulkanBase::createWaterDescriptorSetLayout()
 {
-    // We now have 5 bindings (0-4)
+    // We have 5 bindings (0-4)
     std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
 
-    // binding 0 – scene color texture (RENAMED to Refraction)
+    // binding 0 ? scene color texture (RENAMED to Refraction)
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // binding 1 – water normal map
+    // binding 1 ? water normal map
     bindings[1].binding = 1;
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // binding 2 – DUDV map
+    // binding 2 ? DUDV map
     bindings[2].binding = 2;
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // binding 3 – caustic texture
+    // binding 3 ? caustic texture
     bindings[3].binding = 3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // ================== ADD THIS NEW BINDING ==================
-    // binding 4 – scene reflection texture
+    // binding 4 ? scene reflection texture
     bindings[4].binding = 4;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    // ==========================================================
 
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = (uint32_t)bindings.size(); // This is now 5
+    info.bindingCount = (uint32_t)bindings.size();
     info.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(device, &info, nullptr, &waterDescriptorSetLayout) != VK_SUCCESS)
@@ -3221,6 +3900,73 @@ void VulkanBase::createWaterDescriptors()
 
 void VulkanBase::updateWaterDescriptors()
 {
+    // Validate that all required handles are valid before updating descriptors
+    if (waterDescriptorSet == VK_NULL_HANDLE ||
+        sceneColorImageView == VK_NULL_HANDLE ||
+        sceneColorSampler == VK_NULL_HANDLE ||
+        waterNormalImageView == VK_NULL_HANDLE ||
+        waterSampler == VK_NULL_HANDLE ||
+        waterDudvImageView == VK_NULL_HANDLE ||
+        waterCausticImageView == VK_NULL_HANDLE ||
+        sceneReflectionImageView == VK_NULL_HANDLE ||
+        sceneReflectionSampler == VK_NULL_HANDLE)
+    {
+        // Validate that all required handles are valid before updating descriptors
+        bool missingResources = false;
+
+        if (waterDescriptorSet == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'waterDescriptorSet' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (sceneColorImageView == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'sceneColorImageView' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (sceneColorSampler == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'sceneColorSampler' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (waterNormalImageView == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'waterNormalImageView' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (waterSampler == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'waterSampler' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (waterDudvImageView == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'waterDudvImageView' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (waterCausticImageView == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'waterCausticImageView' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (sceneReflectionImageView == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'sceneReflectionImageView' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+        if (sceneReflectionSampler == VK_NULL_HANDLE)
+        {
+            std::cout << "[ERROR] updateWaterDescriptors: 'sceneReflectionSampler' is VK_NULL_HANDLE\n";
+            missingResources = true;
+        }
+
+        if (missingResources)
+        {
+            std::cout << "[WARNING] updateWaterDescriptors: Skipping update due to above invalid resources.\n";
+            return;
+        }
+    }
+
     // Image info for the scene reflection/refraction texture
     VkDescriptorImageInfo sceneColorInfo{};
     sceneColorInfo.imageView = sceneColorImageView;
@@ -3247,8 +3993,8 @@ void VulkanBase::updateWaterDescriptors()
 
     // Image info for scene reflection texture
     VkDescriptorImageInfo reflectionInfo{};
-    reflectionInfo.imageView = sceneColorImageView; // Using sceneColorImageView as fallback for reflection
-    reflectionInfo.sampler = sceneColorSampler;
+    reflectionInfo.imageView = sceneReflectionImageView;
+    reflectionInfo.sampler = sceneReflectionSampler;
     reflectionInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     // ------------------------------
@@ -3257,7 +4003,7 @@ void VulkanBase::updateWaterDescriptors()
 
     std::array<VkWriteDescriptorSet, 5> writes{};
 
-    // Binding 0 – scene color (refraction)
+    // Binding 0 ? scene color (refraction)
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = waterDescriptorSet;
     writes[0].dstBinding = 0;
@@ -3266,7 +4012,7 @@ void VulkanBase::updateWaterDescriptors()
     writes[0].descriptorCount = 1;
     writes[0].pImageInfo = &sceneColorInfo;
 
-    // Binding 1 – normal map
+    // Binding 1 ? normal map
     writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[1].dstSet = waterDescriptorSet;
     writes[1].dstBinding = 1;
@@ -3275,7 +4021,7 @@ void VulkanBase::updateWaterDescriptors()
     writes[1].descriptorCount = 1;
     writes[1].pImageInfo = &normalInfo;
 
-    // Binding 2 – DUDV map
+    // Binding 2 ? DUDV map
     writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[2].dstSet = waterDescriptorSet;
     writes[2].dstBinding = 2;
@@ -3284,7 +4030,7 @@ void VulkanBase::updateWaterDescriptors()
     writes[2].descriptorCount = 1;
     writes[2].pImageInfo = &dudvInfo;
 
-    // Binding 3 – caustics
+    // Binding 3 ? caustics
     writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[3].dstSet = waterDescriptorSet;
     writes[3].dstBinding = 3;
@@ -3293,7 +4039,7 @@ void VulkanBase::updateWaterDescriptors()
     writes[3].descriptorCount = 1;
     writes[3].pImageInfo = &causticInfo;
 
-    // Binding 4 – reflection texture
+    // Binding 4 ? reflection texture
     writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[4].dstSet = waterDescriptorSet;
     writes[4].dstBinding = 4;
@@ -3305,7 +4051,7 @@ void VulkanBase::updateWaterDescriptors()
     // Update all descriptors
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
-  //  std::cout << "[Water] Descriptor updated successfully.\n";
+    std::cout << "[Water] Descriptor updated successfully.\n";
 }
 
 void VulkanBase::createWaterSampler()
@@ -3314,16 +4060,25 @@ void VulkanBase::createWaterSampler()
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 
+    // IMPORTANT: This allows the water texture to repeat infinitely,
+    // which enables the scrolling/animation effect.
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 
-    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.anisotropyEnable = VK_TRUE; // Turn on Anisotropy for sharper water at angles
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
 
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 1000.0f; // Allow high mip levels
 
     if (vkCreateSampler(device, &samplerInfo, nullptr, &waterSampler) != VK_SUCCESS)
         throw std::runtime_error("Failed to create water sampler!");
@@ -3375,9 +4130,8 @@ void VulkanBase::createSceneColorTexture()
     }
 
     transitionImageLayout(sceneColorImage, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
- 
 
-   // std::cout << "[DEBUG] createSceneColorTexture: created scene color image/view/sampler\n";
+    // std::cout << "[DEBUG] createSceneColorTexture: created scene color image/view/sampler\n";
     sceneOffscreenReady = true;
 }
 
@@ -3422,6 +4176,11 @@ void VulkanBase::createSceneReflectionTexture()
     {
         throw std::runtime_error("failed to create scene reflection sampler!");
     }
+
+    // Ensure the reflection image is transitioned to a shader-readable layout so
+    // it can be sampled even if the offscreen reflection pass is not executed.
+    VkFormat format = swapChainManager->getSwapChainImageFormat();
+    transitionImageLayout(sceneReflectionImage, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, mipLevels);
 }
 
 void VulkanBase::createSceneRefractionTexture()
@@ -3562,6 +4321,10 @@ void VulkanBase::createSceneRefractionRenderPassAndFramebuffer()
         throw std::runtime_error("createSceneRefractionRenderPassAndFramebuffer: failed to create sampler!");
     }
 
+    // If the refraction pass is not executed before sampling, make sure the image
+    // is at least transitioned to SHADER_READ_ONLY_OPTIMAL so shaders can sample it.
+    transitionImageLayout(sceneRefractionImage, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = format;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -3618,8 +4381,7 @@ void VulkanBase::createSceneRefractionRenderPassAndFramebuffer()
         throw std::runtime_error("createSceneRefractionRenderPassAndFramebuffer: failed to create framebuffer");
     }
 
-
-    //std::cout << "[DEBUG] createSceneRefractionRenderPassAndFramebuffer: created\n";
+    // std::cout << "[DEBUG] createSceneRefractionRenderPassAndFramebuffer: created\n";
 }
 
 void VulkanBase::createSceneRenderPassAndFramebuffer()
@@ -3689,18 +4451,18 @@ void VulkanBase::createSceneRenderPassAndFramebuffer()
 void VulkanBase::createWaterDescriptorSet()
 {
     // DEBUG: Validate all image views are valid
-   // std::cout << "\n=== WATER DESCRIPTOR SET CREATION DEBUG ===\n";
-   // std::cout << "sceneColorImageView: " << sceneColorImageView << " (should not be null)\n";
-   // std::cout << "waterNormalImageView: " << waterNormalImageView << "\n";
-   // std::cout << "waterDudvImageView: " << waterDudvImageView << "\n";
-   // std::cout << "waterCausticImageView: " << waterCausticImageView << "\n";
-   // std::cout << "sceneReflectionImageView: " << sceneReflectionImageView << "\n";
+    // std::cout << "\n=== WATER DESCRIPTOR SET CREATION DEBUG ===\n";
+    // std::cout << "sceneColorImageView: " << sceneColorImageView << " (should not be null)\n";
+    // std::cout << "waterNormalImageView: " << waterNormalImageView << "\n";
+    // std::cout << "waterDudvImageView: " << waterDudvImageView << "\n";
+    // std::cout << "waterCausticImageView: " << waterCausticImageView << "\n";
+    // std::cout << "sceneReflectionImageView: " << sceneReflectionImageView << "\n";
 
     // Validate samplers
-   // std::cout << "sceneColorSampler: " << sceneColorSampler << "\n";
-   // std::cout << "textureSampler: " << textureSampler << "\n";
-   // std::cout << "sceneReflectionSampler: " << sceneReflectionSampler << "\n";
-   // std::cout << "=========================================\n\n";
+    // std::cout << "sceneColorSampler: " << sceneColorSampler << "\n";
+    // std::cout << "textureSampler: " << textureSampler << "\n";
+    // std::cout << "sceneReflectionSampler: " << sceneReflectionSampler << "\n";
+    // std::cout << "=========================================\n\n";
 
     VkDescriptorPool pool = descriptorPool->getDescriptorPool();
 
@@ -3714,7 +4476,6 @@ void VulkanBase::createWaterDescriptorSet()
     {
         throw std::runtime_error("failed to allocate water descriptor set!");
     }
-
 
     // Binding 0: refractionTex (sceneColorImageView)
     VkDescriptorImageInfo sceneColorInfo{};
@@ -3747,7 +4508,7 @@ void VulkanBase::createWaterDescriptorSet()
     reflectionInfo.imageView = sceneReflectionImageView;
     reflectionInfo.sampler = sceneReflectionSampler;
 
-    std::array<VkWriteDescriptorSet, 5> descriptorWrites{}; // Size is now 5
+    std::array<VkWriteDescriptorSet, 5> descriptorWrites{};
 
     //  Binding 0 (Refraction)
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -3800,7 +4561,6 @@ void VulkanBase::createWaterDescriptorSet()
                            0, nullptr);
 }
 
-
 glm::mat4 VulkanBase::calculateProjectionMatrix()
 {
     VkExtent2D extent = swapChainManager->getSwapChainExtent();
@@ -3826,7 +4586,7 @@ void VulkanBase::recordReflectionPass(CommandBuffer &commandBuffer, uint32_t ima
     glm::vec3 originalPos = this->camera.position;
     float originalPitch = this->camera.pitch;
 
-    glm::mat4 currentProj = this->calculateProjectionMatrix(); 
+    glm::mat4 currentProj = this->calculateProjectionMatrix();
 
     glm::vec3 reflectedPos = originalPos;
     reflectedPos.y = -originalPos.y + 0.5f;
@@ -3933,7 +4693,7 @@ void VulkanBase::DrawSceneObjects(CommandBuffer &commandBuffer, uint32_t imageIn
 {
     if (!useSolidBackground)
     {
-      //  std::cout << "[DEBUG] About to bind skybox pipeline: " << skyboxPipeline->pipeline << "\n";
+        //  std::cout << "[DEBUG] About to bind skybox pipeline: " << skyboxPipeline->pipeline << "\n";
         skyboxPipeline->bind(commandBuffer.getVkCommandBuffer());
 
         std::array<VkDescriptorSet, 2> sets = {descriptorSets[imageIndex], skyboxDescriptorSet};
@@ -3959,10 +4719,9 @@ void VulkanBase::DrawSceneObjects(CommandBuffer &commandBuffer, uint32_t imageIn
         skyboxMesh->draw(commandBuffer.getVkCommandBuffer());
     }
 
-
-   // std::cout << "[DEBUG] DrawSceneObjects: About to bind graphics pipeline: " << graphicsPipeline << "\n";
-   // std::cout << "[DEBUG] DrawSceneObjects: Main renderPass: " << renderPass << "\n";
-   // std::cout << "[DEBUG] DrawSceneObjects: ImGui renderPass: " << imguiRenderPass << "\n";
+    // std::cout << "[DEBUG] DrawSceneObjects: About to bind graphics pipeline: " << graphicsPipeline << "\n";
+    // std::cout << "[DEBUG] DrawSceneObjects: Main renderPass: " << renderPass << "\n";
+    // std::cout << "[DEBUG] DrawSceneObjects: ImGui renderPass: " << imguiRenderPass << "\n";
 
     vkCmdBindPipeline(commandBuffer.getVkCommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
@@ -3971,15 +4730,18 @@ void VulkanBase::DrawSceneObjects(CommandBuffer &commandBuffer, uint32_t imageIn
     vkCmdBindVertexBuffers(commandBuffer.getVkCommandBuffer(), 0, 1, vertexBuffers, offsets);
     vkCmdBindIndexBuffer(commandBuffer.getVkCommandBuffer(), indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
+    // Bind both descriptor sets: set 0 (scene) and set 1 (water - needed for caustic texture in shader)
+    // Even when not underwater, we need to bind set 1 because the shader declares it
+    std::array<VkDescriptorSet, 2> sceneSets = {descriptorSets[imageIndex], waterDescriptorSet};
     vkCmdBindDescriptorSets(
         commandBuffer.getVkCommandBuffer(),
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         pipelineLayout,
-        0, 1,
-        &descriptorSets[imageIndex],
+        0, 2,
+        sceneSets.data(),
         0, nullptr);
 
-   // std::cout << "[DEBUG] DrawSceneObjects: About to call vkCmdDrawIndexed with " << indices.size() << " indices\n";
+    // std::cout << "[DEBUG] DrawSceneObjects: About to call vkCmdDrawIndexed with " << indices.size() << " indices\n";
     vkCmdDrawIndexed(commandBuffer.getVkCommandBuffer(), static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 }
 void VulkanBase::printMatrix(const glm::mat4 &mat, const std::string &name)
@@ -4007,9 +4769,9 @@ void VulkanBase::processInput(float deltaTime)
             camera.processKeyboard(GLFW_KEY_A, deltaTime);
         if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
             camera.processKeyboard(GLFW_KEY_D, deltaTime);
-        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) 
+        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
             camera.processKeyboard(GLFW_KEY_Q, deltaTime);
-        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) 
+        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
             camera.processKeyboard(GLFW_KEY_E, deltaTime);
     }
 
@@ -4025,12 +4787,430 @@ void VulkanBase::processInput(float deltaTime)
 
     if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS && !screenshotRequested)
     {
-        screenshotRequested = true; 
-        captureScreenshot = true;   
+        screenshotRequested = true;
+        captureScreenshot = true;
     }
 
     if (glfwGetKey(window, GLFW_KEY_P) == GLFW_RELEASE && screenshotRequested)
     {
         screenshotRequested = false; // Reset the request flag
     }
+}
+
+// ============================================================================
+// WATER TESTING SYSTEM IMPLEMENTATION
+// ============================================================================
+
+void VulkanBase::initializeWaterTestingSystem()
+{
+    waterTestingSystem = std::make_unique<WaterTestingSystem>();
+
+    VkUtils::QueueFamilyIndices indices = VkUtils::FindQueueFamilies(physicalDevice, surface);
+    waterTestingSystem->initialize(device, physicalDevice, graphicsQueue, indices.graphicsFamily.value());
+
+    // Set default camera path
+    waterTestingSystem->setCameraPath(DeterministicCameraPath::createUnderwaterPath());
+
+    // Create output directory
+    std::filesystem::create_directories("test_results");
+
+    lastFrameTime = std::chrono::high_resolution_clock::now();
+
+    std::cout << "[VulkanBase] Water testing system initialized\n";
+}
+
+void VulkanBase::cleanupWaterTestingSystem()
+{
+    if (waterTestingSystem)
+    {
+        // Export any remaining results
+        if (!completedTestResults.empty() && autoExportResults)
+        {
+            exportTestResults();
+        }
+        waterTestingSystem->cleanup();
+        waterTestingSystem.reset();
+    }
+}
+
+void VulkanBase::startWaterTest(const WaterTestConfig &config)
+{
+    if (!waterTestingSystem || isTestModeActive)
+        return;
+
+    isTestModeActive = true;
+    currentTestRunIndex = 0;
+
+    // Reset frame timing for accurate measurement from the start
+    lastFrameTime = std::chrono::high_resolution_clock::now();
+    lastCpuTimeMs = 0.0;
+
+    // Apply test configuration to rendering
+    applyTestConfiguration(config);
+
+    // Start the test run
+    waterTestingSystem->startTestRun(config, currentTestRunIndex);
+
+    std::cout << "[VulkanBase] Started water test: " << config.name << "\n";
+}
+
+void VulkanBase::preFrameWaterTestUpdate()
+{
+    if (!waterTestingSystem || !isTestModeActive)
+        return;
+
+    // Get camera state for deterministic path
+    const auto &config = waterTestingSystem->getCurrentConfig();
+    uint32_t currentFrame = waterTestingSystem->getCurrentFrameIndex();
+
+    // Apply deterministic camera if test is running (before rendering)
+    if (waterTestingSystem->isTestRunning())
+    {
+        CameraKeyframe keyframe = waterTestingSystem->getCameraStateForFrame(currentFrame);
+
+        // Apply camera state (override user input during test)
+        camera.position = keyframe.position;
+        camera.setYaw(keyframe.yaw);
+        camera.setPitch(keyframe.pitch);
+    }
+}
+
+void VulkanBase::postFrameWaterTestUpdate()
+{
+    if (!waterTestingSystem || !isTestModeActive)
+        return;
+
+    // Frame timing (lastCpuTimeMs) is now calculated in mainLoop:
+    // - Timer starts BEFORE drawFrame()
+    // - Timer ends AFTER vkQueueWaitIdle()
+    // This gives us the TRUE frame time including all GPU work
+
+    // Get current state
+    const auto &config = waterTestingSystem->getCurrentConfig();
+    uint32_t currentFrame = waterTestingSystem->getCurrentFrameIndex();
+
+    if (waterTestingSystem->isTestRunning())
+    {
+        // Record frame metrics with accurate timing
+        waterTestingSystem->recordFrame(
+            currentFrame,
+            lastCpuTimeMs,
+            camera.position,
+            camera.getYaw(),
+            camera.getPitch());
+
+        // Check if test run is complete
+        if (currentFrame >= config.totalFrames - 1)
+        {
+            // End current run
+            TestRunResult result = waterTestingSystem->endTestRun();
+
+            // Append to CSV file
+            if (autoExportResults)
+            {
+                waterTestingSystem->appendRunToCSV(result, testOutputFilePath);
+            }
+
+            // Store result
+            completedTestResults.push_back(result);
+
+            // Check if more runs needed
+            currentTestRunIndex++;
+            if (currentTestRunIndex < config.repeatCount)
+            {
+                // Start next run
+                waterTestingSystem->startTestRun(config, currentTestRunIndex);
+            }
+            else
+            {
+                // Check if more configs in queue
+                currentTestConfigIndex++;
+                if (currentTestConfigIndex < static_cast<int>(pendingTestConfigs.size()))
+                {
+                    // Start next config
+                    currentTestRunIndex = 0;
+                    applyTestConfiguration(pendingTestConfigs[currentTestConfigIndex]);
+                    waterTestingSystem->startTestRun(pendingTestConfigs[currentTestConfigIndex], 0);
+                }
+                else
+                {
+                    // All tests complete
+                    endWaterTest();
+                }
+            }
+        }
+    }
+}
+
+// Legacy function - kept for compatibility, now split into pre/post frame updates
+void VulkanBase::updateWaterTest()
+{
+    preFrameWaterTestUpdate();
+    // Note: postFrameWaterTestUpdate() is now called after drawFrame() in mainLoop()
+}
+
+void VulkanBase::endWaterTest()
+{
+    if (!waterTestingSystem)
+        return;
+
+    isTestModeActive = false;
+    currentTestConfigIndex = 0;
+    currentTestRunIndex = 0;
+    pendingTestConfigs.clear();
+
+    std::cout << "[VulkanBase] Water testing completed. Total runs: " << completedTestResults.size() << "\n";
+
+    // Generate summary report
+    if (!completedTestResults.empty())
+    {
+        std::vector<AggregatedRunMetrics> summaryMetrics;
+        for (const auto &r : completedTestResults)
+        {
+            summaryMetrics.push_back(r.aggregated);
+        }
+        waterTestingSystem->exportSummaryToCSV(summaryMetrics, "test_results/summary.csv");
+    }
+}
+
+void VulkanBase::applyTestConfiguration(const WaterTestConfig &config)
+{
+    // Apply turbidity
+    switch (config.turbidity)
+    {
+    case TurbidityLevel::Low:
+        underwaterFogDensity = 0.02f;
+        underwaterScatteringIntensity = 0.3f;
+        break;
+    case TurbidityLevel::Medium:
+        underwaterFogDensity = 0.01f;
+        underwaterScatteringIntensity = 0.5f;
+        break;
+    case TurbidityLevel::High:
+        underwaterFogDensity = 0.1f;
+        underwaterScatteringIntensity = 0.8f;
+        break;
+    }
+
+    // Apply depth configuration
+    switch (config.depth)
+    {
+    case DepthLevel::Shallow:
+        // Camera path will handle positioning
+        underwaterDeepColor = glm::vec3(0.0f, 0.2f, 0.4f);
+        break;
+    case DepthLevel::Deep:
+        underwaterDeepColor = glm::vec3(0.0f, 0.05f, 0.15f);
+        break;
+    }
+
+    // Apply light motion
+    switch (config.lightMotion)
+    {
+    case LightMotion::Static:
+        rotationEnabled = false;
+        break;
+    case LightMotion::Moving:
+        rotationEnabled = true;
+        break;
+    }
+
+    // Set camera path based on config
+    switch (config.depth)
+    {
+    case DepthLevel::Shallow:
+        waterTestingSystem->setCameraPath(DeterministicCameraPath::createSurfacePath());
+        break;
+    case DepthLevel::Deep:
+        waterTestingSystem->setCameraPath(DeterministicCameraPath::createDepthTransitionPath());
+        break;
+    }
+
+    std::cout << "[VulkanBase] Applied test configuration: " << config.toString() << "\n";
+}
+
+void VulkanBase::renderTestingUI()
+{
+    if (!waterTestingSystem)
+        return;
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("=== Water Performance Testing ===");
+    ImGui::Spacing();
+
+    // Test type selection
+    const char *testTypes[] = {"Performance", "Image Quality", "Trade-Off Sweep", "Custom"};
+    ImGui::Combo("Test Type", &selectedTestType, testTypes, IM_ARRAYSIZE(testTypes));
+
+    ImGui::Checkbox("Auto-Export to CSV", &autoExportResults);
+    ImGui::Checkbox("Capture Screenshots", &captureTestScreenshots);
+
+    // Output file path
+    static char outputPath[256] = "test_results/water_test_results.csv";
+    ImGui::InputText("Output File", outputPath, sizeof(outputPath));
+    testOutputFilePath = outputPath;
+
+    ImGui::Spacing();
+
+    // Test status
+    if (isTestModeActive)
+    {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "TEST RUNNING");
+
+        float progress = waterTestingSystem->getProgress();
+        ImGui::ProgressBar(progress / 100.0f, ImVec2(-1, 0),
+                           (std::to_string((int)progress) + "%%").c_str());
+
+        ImGui::Text("Config: %d/%d", currentTestConfigIndex + 1, (int)pendingTestConfigs.size());
+        ImGui::Text("Run: %d/%d", currentTestRunIndex + 1, waterTestingSystem->getCurrentConfig().repeatCount);
+        ImGui::Text("Frame: %u/%u", waterTestingSystem->getCurrentFrameIndex(),
+                    waterTestingSystem->getTotalFrames());
+
+        if (ImGui::Button("Stop Test"))
+        {
+            endWaterTest();
+        }
+    }
+    else
+    {
+        // Generate and run test configurations
+        if (ImGui::Button("Run Selected Test Suite"))
+        {
+            completedTestResults.clear();
+            currentTestConfigIndex = 0;
+
+            switch (selectedTestType)
+            {
+            case 0: // Performance
+                pendingTestConfigs = WaterTestingSystem::generatePerformanceTestConfigs();
+                break;
+            case 1: // Image Quality
+                pendingTestConfigs = WaterTestingSystem::generateImageQualityTestConfigs();
+                break;
+            case 2: // Trade-Off
+                pendingTestConfigs = WaterTestingSystem::generateTradeOffSweepConfigs();
+                break;
+            case 3: // Custom - single config with current settings
+            {
+                WaterTestConfig custom;
+                custom.name = "Custom_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+                custom.totalFrames = 300;
+                custom.warmupFrames = 10;
+                custom.repeatCount = 1;
+                pendingTestConfigs = {custom};
+            }
+            break;
+            }
+
+            if (!pendingTestConfigs.empty())
+            {
+                startWaterTest(pendingTestConfigs[0]);
+            }
+        }
+
+        ImGui::SameLine();
+
+        // Quick single-run button
+        if (ImGui::Button("Quick Run (1 Config)"))
+        {
+            completedTestResults.clear();
+
+            WaterTestConfig quickConfig;
+            quickConfig.name = "QuickTest_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count() % 10000);
+            quickConfig.totalFrames = 300;
+            quickConfig.warmupFrames = 10;
+            quickConfig.repeatCount = 1;
+            quickConfig.turbidity = TurbidityLevel::Medium;
+            quickConfig.depth = DepthLevel::Shallow;
+            quickConfig.lightMotion = LightMotion::Static;
+
+            pendingTestConfigs = {quickConfig};
+            currentTestConfigIndex = 0;
+            startWaterTest(quickConfig);
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    // Show last run results
+    if (!completedTestResults.empty())
+    {
+        ImGui::Text("Last Run Results:");
+        const auto &last = completedTestResults.back().aggregated;
+        ImGui::Text("  Mean FPS: %.2f", last.meanFPS);
+        ImGui::Text("  Median FPS: %.2f", last.medianFPS);
+        ImGui::Text("  1%% Low FPS: %.2f", last.fps1Low);
+        ImGui::Text("  Mean Frame Time: %.3f ms", last.meanFrameTime);
+        ImGui::Text("  Std Dev: %.3f ms", last.stddevFrameTime);
+        ImGui::Text("  Valid Frames: %d", last.validFrameCount);
+        ImGui::Text("  Outliers: %d", last.outlierCount);
+
+        if (ImGui::Button("Export All Results"))
+        {
+            exportTestResults();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Clear Results"))
+        {
+            completedTestResults.clear();
+        }
+    }
+
+    ImGui::Spacing();
+
+    // Test configuration preview
+    if (ImGui::CollapsingHeader("Test Configuration Preview"))
+    {
+        ImGui::Text("Pending configs: %d", (int)pendingTestConfigs.size());
+
+        int previewCount = std::min(5, (int)pendingTestConfigs.size());
+        for (int i = 0; i < previewCount; i++)
+        {
+            ImGui::BulletText("%s", pendingTestConfigs[i].name.c_str());
+        }
+        if (pendingTestConfigs.size() > 5)
+        {
+            ImGui::Text("... and %d more", (int)pendingTestConfigs.size() - 5);
+        }
+    }
+}
+
+void VulkanBase::exportTestResults()
+{
+    if (completedTestResults.empty() || !waterTestingSystem)
+        return;
+
+    // Create timestamp for unique filename
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm;
+    localtime_s(&tm, &time);
+
+    std::stringstream ss;
+    ss << "test_results/full_report_"
+       << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".csv";
+
+    TestSuiteResult suite;
+    suite.suiteName = "WaterTestSuite";
+    suite.timestamp = now;
+    suite.runs = completedTestResults;
+    suite.outputDirectory = "test_results";
+
+    waterTestingSystem->exportToCSV(suite, ss.str());
+
+    // Also generate chart data
+    std::vector<AggregatedRunMetrics> metrics;
+    for (const auto &r : completedTestResults)
+    {
+        metrics.push_back(r.aggregated);
+    }
+
+    TestReportGenerator::generatePerformanceChartData(metrics,
+                                                      "test_results/chart_data_" + std::to_string(time) + ".csv");
+
+    std::cout << "[VulkanBase] Exported test results to: " << ss.str() << "\n";
 }

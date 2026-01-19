@@ -1,12 +1,13 @@
-﻿#include "WaterMesh.h"
+#include "OceanBottomMesh.h"
 #include <stdexcept>
 
-void WaterMesh::create(VkDevice device,
+void OceanBottomMesh::create(VkDevice device,
                        VkPhysicalDevice gpu,
                        VkCommandPool commandPool,
                        VkQueue graphicsQueue,
                        int resolution,
-                       float worldSize)
+                       float worldSize,
+                       float depth)
 {
     const int N = resolution;
     const float half = worldSize * 0.5f;
@@ -17,7 +18,7 @@ void WaterMesh::create(VkDevice device,
     vertices.reserve((N + 1) * (N + 1));
 
     // -------------------------
-    // Generate vertices
+    // Generate vertices for ocean bottom plane
     // -------------------------
     for (int y = 0; y <= N; y++)
     {
@@ -27,10 +28,10 @@ void WaterMesh::create(VkDevice device,
             float pz = ((float)y / N) * worldSize - half;
 
             Vertex v{};
-            v.pos = {px, 0.0f, pz};
-            v.normal = {0.0f, 1.0f, 0.0f};
+            v.pos = {px, depth, pz}; // Ocean bottom at specified depth
+            v.normal = {0.0f, 1.0f, 0.0f}; // Normal pointing up
             v.texCoord = {x / float(N), y / float(N)};
-            v.color = {1.0f, 1.0f, 1.0f};
+            v.color = {0.2f, 0.3f, 0.4f}; // Dark blue-gray color for ocean bottom
             v.tangent = {1.0f, 0.0f, 0.0f};
             v.bitangent = {0.0f, 0.0f, 1.0f};
 
@@ -39,7 +40,7 @@ void WaterMesh::create(VkDevice device,
     }
 
     // -------------------------
-    // Generate indices
+    // Generate indices (reverse winding order since we're looking from below)
     // -------------------------
     for (int y = 0; y < N; y++)
     {
@@ -50,13 +51,14 @@ void WaterMesh::create(VkDevice device,
             uint32_t i2 = i0 + (N + 1);
             uint32_t i3 = i2 + 1;
 
+            // Reverse winding for bottom-up view
             indices.push_back(i0);
-            indices.push_back(i2);
             indices.push_back(i1);
+            indices.push_back(i2);
 
             indices.push_back(i1);
-            indices.push_back(i2);
             indices.push_back(i3);
+            indices.push_back(i2);
         }
     }
 
@@ -123,14 +125,10 @@ void WaterMesh::create(VkDevice device,
 
     vkDestroyBuffer(device, stagingIB, nullptr);
     vkFreeMemory(device, stagingIBMem, nullptr);
-
-    isValid.store(true, std::memory_order_release);
 }
 
-void WaterMesh::destroy(VkDevice device)
+void OceanBottomMesh::destroy(VkDevice device)
 {
-    isValid.store(false, std::memory_order_release);
-
     if (vertexBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(device, vertexBuffer, nullptr);
@@ -156,37 +154,14 @@ void WaterMesh::destroy(VkDevice device)
     indexCount = 0;
 }
 
-void WaterMesh::draw(VkCommandBuffer cmd)
+void OceanBottomMesh::draw(VkCommandBuffer cmd)
 {
-    // ABSOLUTE SAFETY: Do not draw anything if mesh is marked invalid
-    // This completely prevents any Vulkan calls during resource recreation
-    // Use atomic load for thread-safe check during window resize
-    if (!isValid.load(std::memory_order_acquire))
+    // Guard against drawing when buffers are not valid
+    if (vertexBuffer == VK_NULL_HANDLE || indexBuffer == VK_NULL_HANDLE || indexCount == 0)
     {
         return;
     }
 
-    // ABSOLUTE SAFETY: Do not proceed with any invalid handles
-    if (cmd == VK_NULL_HANDLE ||
-        vertexBuffer == VK_NULL_HANDLE ||
-        indexBuffer == VK_NULL_HANDLE ||
-        vertexMemory == VK_NULL_HANDLE ||
-        indexMemory == VK_NULL_HANDLE ||
-        indexCount == 0 ||
-        indexCount > 10000000)
-    {
-        // Mark as invalid if any resources are bad to prevent future calls
-        isValid.store(false, std::memory_order_release);
-        return;
-    }
-
-    // Double-check validity after resource validation (prevents race condition)
-    if (!isValid.load(std::memory_order_acquire))
-    {
-        return;
-    }
-
-    // Only execute if ALL validation passes - no try-catch needed
     VkBuffer buffers[] = {vertexBuffer};
     VkDeviceSize offsets[] = {0};
 
@@ -194,3 +169,5 @@ void WaterMesh::draw(VkCommandBuffer cmd)
     vkCmdBindIndexBuffer(cmd, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
 }
+
+

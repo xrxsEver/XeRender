@@ -49,6 +49,7 @@ set(SOURCES
     SwapChainManager.cpp
     Shader2D.cpp
     ModelLoader.cpp
+    WaterTestingSystem.cpp
     Lib/stb_image.h
     Lib/stb_image_write.h
     Lib/json.hpp  
@@ -75,6 +76,7 @@ set(HEADERS
     include/SwapChainManager.h
     include/Shader2D.h
     include/ModelLoader.h
+    include/WaterTestingSystem.h
 )
 
 # Create ImGui as a static library
@@ -86,13 +88,20 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
- "include/SkyboxMesh.h" "SkyboxMesh.cpp" "include/SkyboxPipeline.h" "SkyboxPipeline.cpp" "include/WaterMesh.h" "WaterMesh.cpp" "include/WaterPipeline.h" "WaterPipeline.cpp")
+ "include/SkyboxMesh.h" "SkyboxMesh.cpp" "include/SkyboxPipeline.h" "SkyboxPipeline.cpp" "include/WaterMesh.h" "WaterMesh.cpp" "include/WaterPipeline.h" "WaterPipeline.cpp" "include/UnderwaterWaterPipeline.h" "UnderwaterWaterPipeline.cpp" "include/OceanBottomMesh.h" "OceanBottomMesh.cpp")
 
 # Ensure that ImGui can find GLFW headers
 target_include_directories(imgui PRIVATE ${glfw_SOURCE_DIR}/include)
 
 # Create the executable
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} "include/Camera.h" "include/Camera.cpp" "include/Shader3D.h" "Shader3D.cpp" "include/SkyboxMesh.h" "SkyboxMesh.cpp" "include/SkyboxPipeline.h" "SkyboxPipeline.cpp" "include/WaterMesh.h" "WaterMesh.cpp" "include/WaterPipeline.h" "WaterPipeline.cpp")
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} "include/Camera.h" "include/Camera.cpp" "include/Shader3D.h" "Shader3D.cpp" "include/SkyboxMesh.h" "SkyboxMesh.cpp" "include/SkyboxPipeline.h" "SkyboxPipeline.cpp" "include/WaterMesh.h" "WaterMesh.cpp" "include/WaterPipeline.h" "WaterPipeline.cpp" "include/UnderwaterWaterPipeline.h" "UnderwaterWaterPipeline.cpp" "include/OceanBottomMesh.h" "OceanBottomMesh.cpp")
+
+# Enable console window on Windows for debug output
+if(WIN32)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        WIN32_EXECUTABLE FALSE
+    )
+endif()
 
 # Link libraries
 target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} include ${glfw_INCLUDE_DIRS} Lib ${imgui_SOURCE_DIR})

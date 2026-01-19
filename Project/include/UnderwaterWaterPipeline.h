@@ -6,10 +6,10 @@
 #include "Vertex.h"
 #include "VulkanUtil.h"
 
-class WaterPipeline {
+class UnderwaterWaterPipeline {
 public:
-    WaterPipeline() = default;
-    ~WaterPipeline() = default;
+    UnderwaterWaterPipeline() = default;
+    ~UnderwaterWaterPipeline() = default;
 
     // create: device, swap extent, renderPass, global descriptor set layout, water descriptor set layout, msaa samples
     void create(
@@ -19,7 +19,7 @@ public:
         VkDescriptorSetLayout globalDescriptorSetLayout,
         VkDescriptorSetLayout waterDescriptorSetLayout,
         VkSampleCountFlagBits msaaSamples,
-        bool isSunraysPipeline = false
+        bool isSunraysPipeline 
     );
 
     void destroy(VkDevice device);
@@ -35,3 +35,5 @@ private:
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
 };
+
+

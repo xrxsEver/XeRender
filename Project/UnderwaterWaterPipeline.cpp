@@ -1,4 +1,4 @@
-#include "WaterPipeline.h"
+#include "UnderwaterWaterPipeline.h"
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
@@ -15,7 +15,7 @@ static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptions()
     return vec;
 }
 
-VkShaderModule WaterPipeline::createShaderModule(VkDevice device, const std::vector<char> &code)
+VkShaderModule UnderwaterWaterPipeline::createShaderModule(VkDevice device, const std::vector<char> &code)
 {
     VkShaderModuleCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -25,34 +25,23 @@ VkShaderModule WaterPipeline::createShaderModule(VkDevice device, const std::vec
     VkShaderModule shaderModule;
     if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
     {
-        throw std::runtime_error("Failed to create shader module for water pipeline.");
+        throw std::runtime_error("Failed to create shader module for underwater water pipeline.");
     }
     return shaderModule;
 }
 
-void WaterPipeline::create(
+void UnderwaterWaterPipeline::create(
     VkDevice device,
     VkExtent2D extent,
     VkRenderPass renderPass,
     VkDescriptorSetLayout globalDescriptorSetLayout,
     VkDescriptorSetLayout waterDescriptorSetLayout,
     VkSampleCountFlagBits msaaSamples,
-    bool isSunraysPipeline)
+    bool isSunraysPipeline = true)
 {
-    // 1. Select correct shaders
-    std::vector<char> vertCode;
-    std::vector<char> fragCode;
-
-    if (isSunraysPipeline)
-    {
-        vertCode = VkUtils::readFile("shaders/sunrays.vert.spv");
-        fragCode = VkUtils::readFile("shaders/sunrays.frag.spv");
-    }
-    else
-    {
-        vertCode = VkUtils::readFile("shaders/water.vert.spv");
-        fragCode = VkUtils::readFile("shaders/water.frag.spv");
-    }
+    // Read SPIR-V shaders for underwater water rendering
+    auto vertCode = VkUtils::readFile("shaders/underwater_water.vert.spv");
+    auto fragCode = VkUtils::readFile("shaders/underwater_water.frag.spv");
 
     VkShaderModule vertModule = createShaderModule(device, vertCode);
     VkShaderModule fragModule = createShaderModule(device, fragCode);
@@ -71,27 +60,14 @@ void WaterPipeline::create(
 
     std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {vertStage, fragStage};
 
-    // Vertex input
-    auto bindingDescription = getBindingDescription();
-    auto attributeDescriptions = getAttributeDescriptions();
-
+    // Vertex input (fullscreen triangle uses no vertex buffers)
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    if (isSunraysPipeline)
-    {
-        // Full-screen triangle: no vertex buffers/attributes
-        vertexInput.vertexBindingDescriptionCount = 0;
-        vertexInput.pVertexBindingDescriptions = nullptr;
-        vertexInput.vertexAttributeDescriptionCount = 0;
-        vertexInput.pVertexAttributeDescriptions = nullptr;
-    }
-    else
-    {
-        vertexInput.vertexBindingDescriptionCount = 1;
-        vertexInput.pVertexBindingDescriptions = &bindingDescription;
-        vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-        vertexInput.pVertexAttributeDescriptions = attributeDescriptions.data();
-    }
+    vertexInput.vertexBindingDescriptionCount = 0;
+    vertexInput.pVertexBindingDescriptions = nullptr;
+    vertexInput.vertexAttributeDescriptionCount = 0;
+    vertexInput.pVertexAttributeDescriptions = nullptr;
+
     // Input assembly
     VkPipelineInputAssemblyStateCreateInfo assembly{};
     assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -136,53 +112,27 @@ void WaterPipeline::create(
     multisampling.rasterizationSamples = msaaSamples;
     multisampling.minSampleShading = 0.25f;
 
-    // Depth stencil
+    // Depth stencil - fullscreen fog is composited via blending
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    if (isSunraysPipeline)
-    {
-        // Full-screen additive rays shouldn't be depth-tested nor write depth
-        depthStencil.depthTestEnable = VK_FALSE;
-        depthStencil.depthWriteEnable = VK_FALSE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
-    }
-    else
-    {
-        // Water surface must write to depth so volumetrics can be masked
-        depthStencil.depthTestEnable = VK_TRUE;
-        depthStencil.depthWriteEnable = VK_TRUE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    }
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 
-    // Color blending
+    // Color blending (enable alpha blending for water)
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     colorBlendAttachment.blendEnable = VK_TRUE;
-    if (isSunraysPipeline)
-    {
-        // Additive blending for ray-only pass (adds on top of scene)
-        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-        // Keep destination alpha, do not modify with rays
-        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-    }
-    else
-    {
-        // Standard alpha blending for water surfaces
-        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-    }
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -191,14 +141,14 @@ void WaterPipeline::create(
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
-    // Pipeline layout
+    // Pipeline layout: accept two descriptor sets (global + water)
     std::array<VkDescriptorSetLayout, 2> setLayouts = {globalDescriptorSetLayout, waterDescriptorSetLayout};
 
-    // --- CRITICAL FIX: Ensure Push Constant size is 96 bytes (extended for god-ray params) ---
+    // Push constant for underwater water shader: time, scale, colors, and lighting parameters
     VkPushConstantRange pushRange{};
     pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushRange.offset = 0;
-    pushRange.size = 96; // Size extended for God Rays/Fog data + extra floats
+    pushRange.size = 96; // Extended to 96 bytes for underwater parameters + god-ray fields
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -209,7 +159,7 @@ void WaterPipeline::create(
 
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &layout) != VK_SUCCESS)
     {
-        throw std::runtime_error("Failed to create water pipeline layout.");
+        throw std::runtime_error("Failed to create underwater water pipeline layout.");
     }
 
     // Create graphics pipeline
@@ -232,14 +182,15 @@ void WaterPipeline::create(
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS)
     {
         vkDestroyPipelineLayout(device, layout, nullptr);
-        throw std::runtime_error("Failed to create water graphics pipeline.");
+        throw std::runtime_error("Failed to create underwater water graphics pipeline.");
     }
 
+    // cleanup shader modules
     vkDestroyShaderModule(device, vertModule, nullptr);
     vkDestroyShaderModule(device, fragModule, nullptr);
 }
 
-void WaterPipeline::destroy(VkDevice device)
+void UnderwaterWaterPipeline::destroy(VkDevice device)
 {
     if (pipeline != VK_NULL_HANDLE)
     {
@@ -253,7 +204,7 @@ void WaterPipeline::destroy(VkDevice device)
     }
 }
 
-void WaterPipeline::bind(VkCommandBuffer cmd)
+void UnderwaterWaterPipeline::bind(VkCommandBuffer cmd)
 {
     if (pipeline == VK_NULL_HANDLE)
         return;
